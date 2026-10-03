@@ -46,7 +46,11 @@ export default function HomePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginRole, setLoginRole] = useState<UserRole>('dept');
   const [loginDeptId, setLoginDeptId] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [pendingDeptId, setPendingDeptId] = useState('');
+  const [switchPassword, setSwitchPassword] = useState('');
+  const [switchError, setSwitchError] = useState('');
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
   const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
@@ -71,10 +75,14 @@ export default function HomePage() {
 
   useEffect(() => {
     const savedRole = localStorage.getItem('or_user_role');
+    const savedLoggedIn = localStorage.getItem('or_logged_in') === 'true';
     if (savedRole === 'manager' || savedRole === 'dept') {
       setUserRole(savedRole);
       setLoginRole(savedRole);
       setView(savedRole === 'manager' ? 'board' : 'myslots');
+    }
+    if (savedLoggedIn) {
+      setIsLoggedIn(true);
     }
   }, []);
 
@@ -134,14 +142,24 @@ export default function HomePage() {
       return;
     }
 
-    const input = window.prompt('他診療科切替には認証が必要です\nパスワードを入力してください');
-    if (input === '1234') {
-      setLoginError('');
-      handleDeptChange(nextDeptId);
+    setPendingDeptId(nextDeptId);
+    setSwitchPassword('');
+    setSwitchError('');
+  }
+
+  function confirmDeptSwitch() {
+    if (switchPassword !== '1234') {
+      setSwitchError('パスワードが一致しないため、他診療科への切替はできません。');
       return;
     }
+    handleDeptChange(pendingDeptId);
+    cancelDeptSwitch();
+  }
 
-    setLoginError('パスワードが一致しないため、他診療科への切替はできません。');
+  function cancelDeptSwitch() {
+    setPendingDeptId('');
+    setSwitchPassword('');
+    setSwitchError('');
   }
 
   function handleRoleChange(role: UserRole) {
@@ -205,20 +223,21 @@ export default function HomePage() {
         return;
       }
 
-      const password = window.prompt('診療科部長として入室するには認証が必要です\nパスワードを入力してください');
-      if (password !== '1234') {
+      if (loginPassword !== '1234') {
         setLoginError('パスワードが一致しないため入室できません。');
         return;
       }
     }
 
     setLoginError('');
+    setLoginPassword('');
     const nextDeptId = loginRole === 'dept' ? loginDeptId : (activeDeptId || schedule.departments[0]?.id || '');
 
     setUserRole(loginRole);
     setActiveDeptId(nextDeptId);
     setView(loginRole === 'manager' ? 'board' : 'myslots');
     localStorage.setItem('or_user_role', loginRole);
+    localStorage.setItem('or_logged_in', 'true');
     if (nextDeptId) localStorage.setItem('or_active_dept', nextDeptId);
     setIsLoggedIn(true);
   }
@@ -334,20 +353,37 @@ export default function HomePage() {
             </div>
 
             {loginRole === 'dept' && (
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">所属診療科</label>
-                <select
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none"
-                  value={loginDeptId}
-                  onChange={e => {
-                    setLoginDeptId(e.target.value);
-                    setLoginError('');
-                  }}
-                >
-                  {schedule.departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">所属診療科</label>
+                  <select
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none"
+                    value={loginDeptId}
+                    onChange={e => {
+                      setLoginDeptId(e.target.value);
+                      setLoginError('');
+                    }}
+                  >
+                    {schedule.departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">パスワード</label>
+                  <input
+                    type="password"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none"
+                    value={loginPassword}
+                    onChange={e => {
+                      setLoginPassword(e.target.value);
+                      setLoginError('');
+                    }}
+                    placeholder="1234"
+                    autoComplete="current-password"
+                  />
+                </div>
               </div>
             )}
 
@@ -383,7 +419,7 @@ export default function HomePage() {
   const canViewDashboard = isManager;
   const canEditAbsence = isManager || userRole === 'dept';
 
-  const handleApproveRequest = useCallback((requestId: string) => {
+  function handleApproveRequest(requestId: string) {
     const req = schedule.slotRequests.find(r => r.id === requestId);
     if (!req) return;
 
@@ -400,7 +436,7 @@ export default function HomePage() {
       startHour: Number(req.wantedStartTime.split(':')[0]),
       endHour: Number(req.wantedEndTime.split(':')[0]),
     });
-  }, [schedule.approveRequest, schedule.releasedSlots, schedule.slotRequests, notificationCadence]);
+  }
 
   const workflowSteps = [
     {
@@ -464,6 +500,37 @@ export default function HomePage() {
             </div>
           )}
 
+          {userRole === 'dept' && pendingDeptId && (
+            <div className="flex items-center gap-2 ml-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+              <span className="text-xs text-amber-700 whitespace-nowrap">
+                {schedule.departments.find(d => d.id === pendingDeptId)?.name ?? '他診療科'}へ切替:
+              </span>
+              <input
+                type="password"
+                autoFocus
+                className="w-24 rounded-lg border border-amber-200 bg-white px-2 py-1 text-sm focus:border-amber-400 focus:outline-none"
+                value={switchPassword}
+                onChange={e => {
+                  setSwitchPassword(e.target.value);
+                  setSwitchError('');
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') confirmDeptSwitch();
+                  if (e.key === 'Escape') cancelDeptSwitch();
+                }}
+                placeholder="パスワード"
+                autoComplete="current-password"
+              />
+              <button type="button" onClick={confirmDeptSwitch} className="text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-2 py-1">
+                切替
+              </button>
+              <button type="button" onClick={cancelDeptSwitch} className="text-xs text-gray-500 hover:text-gray-700">
+                取消
+              </button>
+              {switchError && <span className="text-xs font-medium text-red-600">{switchError}</span>}
+            </div>
+          )}
+
           {userRole === 'manager' && (
             <>
               <div className="flex items-center gap-2 ml-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
@@ -499,6 +566,7 @@ export default function HomePage() {
             type="button"
             onClick={() => {
               setIsLoggedIn(false);
+              localStorage.setItem('or_logged_in', 'false');
               setLoginError('');
             }}
             className="ml-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200"
