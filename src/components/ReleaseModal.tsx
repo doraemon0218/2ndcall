@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { SlotAllocation, ReleasedSlot, Department } from '@/lib/types';
+import { SlotAllocation, ReleasedSlot, Department, SlotRequest } from '@/lib/types';
 
 interface Props {
   allocation: SlotAllocation;
   date: string;
   existingRelease?: ReleasedSlot;
+  pendingRequests?: SlotRequest[];
   departments: Department[];
   currentUserRole?: 'manager' | 'dept';
   currentDeptId?: string;
@@ -16,12 +17,17 @@ interface Props {
   onClose: () => void;
 }
 
-export default function ReleaseModal({ allocation, date, existingRelease, departments, currentUserRole = 'manager', currentDeptId = '', onRelease, onClaim, onCancel, onClose }: Props) {
+export default function ReleaseModal({ allocation, date, existingRelease, pendingRequests = [], departments, currentUserRole = 'manager', currentDeptId = '', onRelease, onClaim, onCancel, onClose }: Props) {
   const [tab, setTab] = useState<'release' | 'claim'>(existingRelease && !existingRelease.claimedByDeptId ? 'claim' : 'release');
   const [releasedBy, setReleasedBy] = useState(currentUserRole === 'dept' && currentDeptId ? departments.find(d => d.id === currentDeptId)?.name ?? '' : '');
   const [message, setMessage] = useState('');
   const [messagePreset, setMessagePreset] = useState('');
   const [claimDeptId, setClaimDeptId] = useState(currentUserRole === 'dept' && currentDeptId ? currentDeptId : '');
+
+  const myPendingRequest = currentUserRole === 'dept'
+    ? pendingRequests.find(r => r.requestingDeptId === currentDeptId)
+    : undefined;
+  const isOwnRelease = currentUserRole === 'dept' && allocation.deptId === currentDeptId;
 
   function handleRelease(e: React.FormEvent) {
     e.preventDefault();
@@ -155,7 +161,22 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
                   この枠はまだ解放されていません。解放後に他の診療科が引き受けることができます。
                 </p>
               )}
-              {existingRelease && !existingRelease.claimedByDeptId && (
+              {existingRelease && !existingRelease.claimedByDeptId && pendingRequests.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  承認待ち: {pendingRequests.map(r => r.requestingDeptName).join('、')}
+                </div>
+              )}
+              {existingRelease && !existingRelease.claimedByDeptId && myPendingRequest && (
+                <p className="text-sm text-amber-800 bg-amber-50 rounded-lg p-3">
+                  引き受けを申請済みです。手術室管理者の承認後に確定します。
+                </p>
+              )}
+              {existingRelease && !existingRelease.claimedByDeptId && isOwnRelease && (
+                <p className="text-sm text-gray-500 bg-gray-50 rounded-lg p-3">
+                  自科が共有した枠です。他の診療科からの引き受け申請を待っています。
+                </p>
+              )}
+              {existingRelease && !existingRelease.claimedByDeptId && !myPendingRequest && !isOwnRelease && (
                 <>
                   {currentUserRole === 'manager' ? (
                     <div>
@@ -174,7 +195,8 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
                     </div>
                   ) : (
                     <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                      自診療科としてこの枠を引き受けます: <span className="font-bold">{departments.find(d => d.id === currentDeptId)?.name ?? '自科'}</span>
+                      自診療科としてこの枠の引き受けを申請します: <span className="font-bold">{departments.find(d => d.id === currentDeptId)?.name ?? '自科'}</span>
+                      <p className="mt-1 text-xs text-blue-700">手術室管理者が承認すると確定し、各診療科へ通知されます。</p>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -182,7 +204,7 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
                       キャンセル
                     </button>
                     <button type="submit" className="flex-1 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
-                      ✓ この枠を引き受ける
+                      {currentUserRole === 'manager' ? '✓ この枠を割り当てる' : '✓ 引き受けを申請する'}
                     </button>
                   </div>
                 </>

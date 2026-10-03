@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { Surgery, SlotAllocation, Department, OperatingRoom, WeeklySlot, ReleasedSlot } from '@/lib/types';
+import { Surgery, SlotAllocation, Department, OperatingRoom, WeeklySlot, ReleasedSlot, SlotRequest } from '@/lib/types';
 import { formatDate, getDeptBgStyle, getUtilizationColor, buildWeeklySlots, getWeekDates, allocationStartHHMM, allocationEndHHMM } from '@/lib/utils';
 import { getPeriodLabel } from '@/lib/types';
 import SurgeryModal from './SurgeryModal';
@@ -28,6 +28,7 @@ interface Props {
     availStartTime?: string; availEndTime?: string;
     releasedBy: string; message: string;
   }) => void;
+  slotRequests?: SlotRequest[];
   onClaimSlot: (releaseId: string, deptId: string, deptName: string) => void;
   onCancelRelease: (releaseId: string) => void;
 }
@@ -39,18 +40,26 @@ export default function WeeklySchedule({
   weekStart, allocations, surgeries, releasedSlots, departments, rooms,
   currentUserRole = 'manager', currentDeptId = '',
   onAddSurgery, onUpdateSurgery, onDeleteSurgery,
-  onReleaseSlot, onClaimSlot, onCancelRelease,
+  slotRequests = [], onReleaseSlot, onClaimSlot, onCancelRelease,
 }: Props) {
   const [surgeryModal, setSurgeryModal] = useState<SurgeryModalState | null>(null);
   const [releaseModal, setReleaseModal] = useState<ReleaseModalState | null>(null);
   const weekDates = getWeekDates(weekStart);
   const slots = buildWeeklySlots(allocations, surgeries, weekDates, releasedSlots);
 
-  function getSlot(roomId: string, date: string): WeeklySlot | undefined {
-    return slots.find(s => s.allocation.roomId === roomId && s.date === date);
+  function getPendingRequests(releaseId?: string): SlotRequest[] {
+    if (!releaseId) return [];
+    return slotRequests.filter(r => r.releaseId === releaseId && r.status === 'pending');
+  }
+
+  function getSlots(roomId: string, date: string): WeeklySlot[] {
+    return slots
+      .filter(s => s.allocation.roomId === roomId && s.date === date)
+      .sort((a, b) => a.allocation.startHour - b.allocation.startHour);
   }
 
   const dayLabels = weekDates.map(d => formatDate(d));
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
   const canManageDeptRelease = (slot: WeeklySlot) => {
     if (currentUserRole === 'manager') return true;
     if (currentUserRole !== 'dept') return false;
@@ -99,142 +108,167 @@ export default function WeeklySchedule({
               </td>
               {weekDates.map((date, di) => {
                 const dateStr = format(date, 'yyyy-MM-dd');
-                const slot = getSlot(room.id, dateStr);
+                const cellSlots = getSlots(room.id, dateStr);
 
-                if (!slot) {
+                if (cellSlots.length === 0) {
                   return <td key={di} className="border-b border-r border-gray-100 bg-gray-50/30" />;
                 }
 
-                const dept = departments.find(d => d.id === slot.allocation.deptId);
-                const deptColor = dept ? getDeptBgStyle(dept.color) : '#9ca3af';
-                const isReleased = !!slot.releasedSlot;
-                const cellBg = getUtilizationColor(slot.utilizationRate, slot.isEmpty, slot.isDeadlinePassed, isReleased);
-                const activeSurgeries = slot.surgeries.filter(s => s.status !== 'cancelled');
-
                 return (
-                  <td key={di} className={`border-b border-r border-gray-200 p-2 align-top ${cellBg}`} style={{ minHeight: '120px', verticalAlign: 'top' }}>
-                    {/* Dept header strip */}
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: deptColor }} />
-                      <span className="text-xs font-bold text-gray-700 truncate">{slot.allocation.deptName}</span>
-                      <span className="ml-auto text-xs text-gray-400 whitespace-nowrap font-mono">
-                        {getPeriodLabel(slot.allocation.period)}
-                        <span className="text-gray-300 ml-1">{allocationStartHHMM(slot.allocation)}–{allocationEndHHMM(slot.allocation)}</span>
-                      </span>
-                    </div>
+                  <td key={di} className="border-b border-r border-gray-200 p-1.5 align-top space-y-1.5" style={{ verticalAlign: 'top' }}>
+                    {cellSlots.map(slot => {
+                      const dept = departments.find(d => d.id === slot.allocation.deptId);
+                      const deptColor = dept ? getDeptBgStyle(dept.color) : '#9ca3af';
+                      const isReleased = !!slot.releasedSlot;
+                      const cellBg = getUtilizationColor(slot.utilizationRate, slot.isEmpty, slot.isDeadlinePassed, isReleased);
+                      const activeSurgeries = slot.surgeries.filter(s => s.status !== 'cancelled');
+                      const isPast = slot.date < todayStr;
 
-                    {/* Utilization bar */}
-                    <div className="h-1.5 rounded-full bg-white/70 mb-2 overflow-hidden">
-                      <div
-                        className="h-1.5 rounded-full transition-all duration-300"
-                        style={{
-                          width: `${Math.min(slot.utilizationRate, 100)}%`,
-                          backgroundColor: slot.utilizationRate >= 80 ? '#22c55e' : slot.utilizationRate >= 50 ? '#eab308' : slot.isEmpty ? '#d1d5db' : '#f97316',
-                        }}
-                      />
-                    </div>
+                      return (
+                        <div key={slot.allocation.id} className={`rounded-lg border p-2 ${isPast ? 'bg-gray-50 border-gray-200 opacity-70' : cellBg}`}>
+                          {/* Dept header strip */}
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: deptColor }} />
+                            <span className="text-xs font-bold text-gray-700 truncate">{slot.allocation.deptName}</span>
+                            <span className="ml-auto text-xs text-gray-400 whitespace-nowrap font-mono">
+                              {getPeriodLabel(slot.allocation.period)}
+                              <span className="text-gray-300 ml-1">{allocationStartHHMM(slot.allocation)}–{allocationEndHHMM(slot.allocation)}</span>
+                            </span>
+                          </div>
 
-                    {/* Released badge */}
-                    {isReleased && (
-                      <div className={`mb-1.5 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 ${slot.releasedSlot?.claimedByDeptId ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-purple-100 text-purple-700 border border-purple-200'}`}>
-                        {slot.releasedSlot?.claimedByDeptId
-                          ? `✓ ${slot.releasedSlot.claimedByDeptName}が引受済`
-                          : '🔓 解放中 — 引受待ち'}
-                      </div>
-                    )}
+                          {/* Utilization bar */}
+                          <div className="h-1.5 rounded-full bg-white/70 mb-2 overflow-hidden">
+                            <div
+                              className="h-1.5 rounded-full transition-all duration-300"
+                              style={{
+                                width: `${Math.min(slot.utilizationRate, 100)}%`,
+                                backgroundColor: slot.utilizationRate >= 80 ? '#22c55e' : slot.utilizationRate >= 50 ? '#eab308' : slot.isEmpty ? '#d1d5db' : '#f97316',
+                              }}
+                            />
+                          </div>
 
-                    {/* Deadline alert */}
-{slot.isEmpty && slot.isDeadlinePassed && !isReleased && canManageDeptRelease(slot) && (
-                      <button
-                        onClick={() => setReleaseModal({ slot })}
-                        className="mb-1.5 w-full px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold flex items-center gap-1 hover:bg-red-200 transition-colors"
-                      >
-                        <span>⚠</span> 空き枠 — 枠を解放する
-                      </button>
-                    )}
-
-                    {/* Surgery cards */}
-                    <div className="space-y-1">
-                      {activeSurgeries.map(s => {
-                        const sDept = departments.find(d => d.id === s.deptId);
-                        const sColor = sDept ? getDeptBgStyle(sDept.color) : deptColor;
-                        return (
-                          <button
-                            key={s.id}
-                            onClick={() => {
-                              if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
-                            }}
-                            className={`w-full text-left px-2 py-1.5 rounded border border-gray-200 bg-white text-xs hover:shadow-sm transition-all group ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
-                            style={{ borderLeftWidth: '3px', borderLeftColor: sColor }}
-                          >
-                            <div className="flex items-start gap-1">
-                              <span className="font-semibold text-gray-800 truncate flex-1 leading-tight">{s.procedure}</span>
-                              {s.isEmergency && <span className="text-red-500 text-xs font-bold flex-shrink-0">緊急</span>}
+                          {/* Released badge */}
+                          {isReleased && (
+                            <div className={`mb-1.5 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 ${slot.releasedSlot?.claimedByDeptId ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-purple-100 text-purple-700 border border-purple-200'}`}>
+                              {slot.releasedSlot?.claimedByDeptId
+                                ? `✓ ${slot.releasedSlot.claimedByDeptName}が引受済`
+                                : getPendingRequests(slot.releasedSlot?.id).length > 0
+                                  ? `⏳ 承認待ち: ${getPendingRequests(slot.releasedSlot?.id).map(r => r.requestingDeptName).join('、')}`
+                                  : '🔓 解放中 — 引受待ち'}
                             </div>
-                            <div className="text-gray-500 mt-0.5 text-xs flex items-center gap-1">
-                              <span className="font-mono">{s.startTime}–{s.endTime}</span>
-                              {s.surgeonName && <span className="truncate">· {s.surgeonName}</span>}
+                          )}
+
+                          {/* Deadline alert */}
+      {!isPast && slot.isEmpty && slot.isDeadlinePassed && !isReleased && canManageDeptRelease(slot) && (
+                            <button
+                              onClick={() => setReleaseModal({ slot })}
+                              className="mb-1.5 w-full px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold flex items-center gap-1 hover:bg-red-200 transition-colors"
+                            >
+                              <span>⚠</span> 空き枠 — 枠を解放する
+                            </button>
+                          )}
+
+                          {/* Surgery cards */}
+                          <div className="space-y-1">
+                            {activeSurgeries.map(s => {
+                              const sDept = departments.find(d => d.id === s.deptId);
+                              const sColor = sDept ? getDeptBgStyle(sDept.color) : deptColor;
+                              return (
+                                <button
+                                  key={s.id}
+                                  onClick={() => {
+                                    if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
+                                  }}
+                                  className={`w-full text-left px-2 py-1.5 rounded border border-gray-200 bg-white text-xs hover:shadow-sm transition-all group ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
+                                  style={{ borderLeftWidth: '3px', borderLeftColor: sColor }}
+                                >
+                                  <div className="flex items-start gap-1">
+                                    <span className="font-semibold text-gray-800 truncate flex-1 leading-tight">{s.procedure}</span>
+                                    {s.isEmergency && <span className="text-red-500 text-xs font-bold flex-shrink-0">緊急</span>}
+                                  </div>
+                                  <div className="text-gray-500 mt-0.5 text-xs flex items-center gap-1">
+                                    <span className="font-mono">{s.startTime}–{s.endTime}</span>
+                                    {s.surgeonName && <span className="truncate">· {s.surgeonName}</span>}
+                                  </div>
+                                  {s.deptId !== slot.allocation.deptId && sDept && (
+                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: sColor + '20', color: sColor }}>
+                                      {sDept.shortName}
+                                    </span>
+                                  )}
+                                  {s.status === 'completed' && (
+                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs">実施済</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+
+                            {slot.surgeries.filter(s => s.status === 'cancelled').map(s => (
+                              <button
+                                key={s.id}
+                                onClick={() => {
+                                  if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
+                                }}
+                                className={`w-full text-left px-2 py-1 rounded border border-gray-200 text-xs text-gray-400 line-through bg-white ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
+                              >
+                                {s.procedure}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Actions */}
+                          <div className="mt-1.5 flex gap-1">
+                            {canEditSurgeryForSlot(slot) && (
+                              <button
+                                onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date })}
+                                className="flex-1 py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-gray-300 hover:border-blue-400 transition-colors"
+                              >
+                                ＋ 手術追加
+                              </button>
+                            )}
+                            {!isPast && slot.isEmpty && !isReleased && canManageDeptRelease(slot) && (
+                              <button
+                                onClick={() => setReleaseModal({ slot })}
+                                className="px-2 py-1 text-xs text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded border border-dashed border-gray-300 hover:border-purple-400 transition-colors"
+                                title="枠を解放"
+                              >
+                                🔓
+                              </button>
+                            )}
+                            {!isPast && isReleased && !slot.releasedSlot?.claimedByDeptId && currentUserRole === 'manager' && (
+                              <button
+                                onClick={() => setReleaseModal({ slot })}
+                                className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded border border-blue-300 transition-colors"
+                                title="引き受ける"
+                              >
+                                割当
+                              </button>
+                            )}
+                            {!isPast && isReleased && !slot.releasedSlot?.claimedByDeptId && currentUserRole === 'dept' && slot.allocation.deptId !== currentDeptId && (
+                              getPendingRequests(slot.releasedSlot?.id).some(r => r.requestingDeptId === currentDeptId) ? (
+                                <span className="px-2 py-1 text-xs font-bold text-amber-700 bg-amber-50 rounded border border-amber-200">⏳ 申請済</span>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    const dept = departments.find(d => d.id === currentDeptId);
+                                    if (slot.releasedSlot && dept) onClaimSlot(slot.releasedSlot.id, dept.id, dept.name);
+                                  }}
+                                  className="px-2 py-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors"
+                                  title="引き受ける"
+                                >
+                                  引受を申請
+                                </button>
+                              )
+                            )}
+                          </div>
+
+                          {!slot.isEmpty && (
+                            <div className="mt-1 text-right text-xs text-gray-400 font-mono">
+                              {slot.utilizationRate}%
                             </div>
-                            {s.deptId !== slot.allocation.deptId && sDept && (
-                              <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: sColor + '20', color: sColor }}>
-                                {sDept.shortName}
-                              </span>
-                            )}
-                            {s.status === 'completed' && (
-                              <span className="inline-block mt-0.5 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs">実施済</span>
-                            )}
-                          </button>
-                        );
-                      })}
-
-                      {slot.surgeries.filter(s => s.status === 'cancelled').map(s => (
-                        <button
-                          key={s.id}
-                          onClick={() => {
-                            if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
-                          }}
-                          className={`w-full text-left px-2 py-1 rounded border border-gray-200 text-xs text-gray-400 line-through bg-white ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
-                        >
-                          {s.procedure}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="mt-1.5 flex gap-1">
-                      {canEditSurgeryForSlot(slot) && (
-                        <button
-                          onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date })}
-                          className="flex-1 py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-gray-300 hover:border-blue-400 transition-colors"
-                        >
-                          ＋ 手術追加
-                        </button>
-                      )}
-                      {slot.isEmpty && !isReleased && canManageDeptRelease(slot) && (
-                        <button
-                          onClick={() => setReleaseModal({ slot })}
-                          className="px-2 py-1 text-xs text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded border border-dashed border-gray-300 hover:border-purple-400 transition-colors"
-                          title="枠を解放"
-                        >
-                          🔓
-                        </button>
-                      )}
-                      {isReleased && !slot.releasedSlot?.claimedByDeptId && (
-                        <button
-                          onClick={() => setReleaseModal({ slot })}
-                          className="px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded border border-blue-300 transition-colors"
-                          title="引き受ける"
-                        >
-                          引受
-                        </button>
-                      )}
-                    </div>
-
-                    {!slot.isEmpty && (
-                      <div className="mt-1 text-right text-xs text-gray-400 font-mono">
-                        {slot.utilizationRate}%
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      );
+                    })}
                   </td>
                 );
               })}
@@ -264,6 +298,7 @@ export default function WeeklySchedule({
           allocation={releaseModal.slot.allocation}
           date={releaseModal.slot.date}
           existingRelease={releaseModal.slot.releasedSlot}
+          pendingRequests={getPendingRequests(releaseModal.slot.releasedSlot?.id)}
           departments={departments}
           currentUserRole={currentUserRole}
           currentDeptId={currentDeptId}

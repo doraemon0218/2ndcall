@@ -2,6 +2,12 @@ import { format, startOfWeek, addDays, getDay, isBefore } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { SlotAllocation, Surgery, WeeklySlot, ReleasedSlot, PERIOD_HOURS, Period } from './types';
 
+// 土日は今週の手術が終わっているため、翌週を「今週」として扱う
+export function getOperatingWeekStart(base: Date = new Date()): Date {
+  const day = base.getDay();
+  return startOfWeek(day === 0 || day === 6 ? addDays(base, 2) : base, { weekStartsOn: 1 });
+}
+
 export function getWeekDates(baseDate: Date): Date[] {
   const monday = startOfWeek(baseDate, { weekStartsOn: 1 });
   return Array.from({ length: 6 }, (_, i) => addDays(monday, i)); // Mon-Sat

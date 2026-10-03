@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { addWeeks, subWeeks, format, startOfWeek } from 'date-fns';
+import { addWeeks, subWeeks, format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { useSchedule } from '@/hooks/useSchedule';
 import WeeklySchedule from '@/components/WeeklySchedule';
@@ -12,9 +12,12 @@ import AbsenceModal, { Absence } from '@/components/AbsenceModal';
 import AbsenceImportModal from '@/components/AbsenceImportModal';
 import AllocationMasterModal from '@/components/AllocationMasterModal';
 import DeptSlotView from '@/components/DeptSlotView';
-import { generateId } from '@/lib/utils';
+import ManagerWeekOverview from '@/components/ManagerWeekOverview';
+import AnalyticsDashboard from '@/components/AnalyticsDashboard';
+import { logEvent, setActor } from '@/lib/eventLog';
+import { generateId, getOperatingWeekStart } from '@/lib/utils';
 
-type View = 'schedule' | 'myslots' | 'board' | 'competition';
+type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'analytics';
 type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
@@ -33,7 +36,7 @@ interface DeptNotification {
 
 export default function HomePage() {
   const schedule = useSchedule();
-  const [weekStart, setWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [weekStart, setWeekStart] = useState(getOperatingWeekStart());
   const [absences, setAbsences] = useState<Absence[]>([]);
   const [view, setView] = useState<View>('board');
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
@@ -79,7 +82,7 @@ export default function HomePage() {
     if (savedRole === 'manager' || savedRole === 'dept') {
       setUserRole(savedRole);
       setLoginRole(savedRole);
-      setView(savedRole === 'manager' ? 'board' : 'myslots');
+      setView(savedRole === 'manager' ? 'overview' : 'myslots');
     }
     if (savedLoggedIn) {
       setIsLoggedIn(true);
@@ -107,6 +110,13 @@ export default function HomePage() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    const dept = schedule.departments.find(d => d.id === activeDeptId);
+    setActor(isLoggedIn
+      ? { role: userRole, deptId: userRole === 'dept' ? activeDeptId : undefined, deptName: userRole === 'dept' ? dept?.name : undefined }
+      : { role: 'unknown' });
+  }, [isLoggedIn, userRole, activeDeptId, schedule.departments]);
 
   useEffect(() => {
     localStorage.setItem('or_dept_notifications', JSON.stringify(deptNotifications));
@@ -149,9 +159,11 @@ export default function HomePage() {
 
   function confirmDeptSwitch() {
     if (switchPassword !== '1234') {
+      logEvent('dept_switch_failed', { toDeptId: pendingDeptId });
       setSwitchError('パスワードが一致しないため、他診療科への切替はできません。');
       return;
     }
+    logEvent('dept_switch', { fromDeptId: activeDeptId, toDeptId: pendingDeptId });
     handleDeptChange(pendingDeptId);
     cancelDeptSwitch();
   }
@@ -160,13 +172,6 @@ export default function HomePage() {
     setPendingDeptId('');
     setSwitchPassword('');
     setSwitchError('');
-  }
-
-  function handleRoleChange(role: UserRole) {
-    setUserRole(role);
-    setLoginRole(role);
-    setView(role === 'manager' ? 'board' : 'myslots');
-    localStorage.setItem('or_user_role', role);
   }
 
   function handleNotificationCadenceChange(value: NotificationCadence) {
@@ -224,6 +229,7 @@ export default function HomePage() {
       }
 
       if (loginPassword !== '1234') {
+        logEvent('login_failed', { role: loginRole, deptId: loginDeptId });
         setLoginError('パスワードが一致しないため入室できません。');
         return;
       }
@@ -233,9 +239,12 @@ export default function HomePage() {
     setLoginPassword('');
     const nextDeptId = loginRole === 'dept' ? loginDeptId : (activeDeptId || schedule.departments[0]?.id || '');
 
+    const loginDept = schedule.departments.find(d => d.id === nextDeptId);
+    setActor(loginRole === 'dept' ? { role: 'dept', deptId: nextDeptId, deptName: loginDept?.name } : { role: 'manager' });
+    logEvent('login', { role: loginRole, deptId: loginRole === 'dept' ? nextDeptId : undefined });
     setUserRole(loginRole);
     setActiveDeptId(nextDeptId);
-    setView(loginRole === 'manager' ? 'board' : 'myslots');
+    setView(loginRole === 'manager' ? 'overview' : 'myslots');
     localStorage.setItem('or_user_role', loginRole);
     localStorage.setItem('or_logged_in', 'true');
     if (nextDeptId) localStorage.setItem('or_active_dept', nextDeptId);
@@ -281,8 +290,17 @@ export default function HomePage() {
     }
   }, [schedule.allocations, schedule.releaseSlot, schedule.releasedSlots, schedule.surgeries]);
 
+  function logAbsence(absence: Absence, via: 'manual' | 'import') {
+    const days = Math.round((new Date(`${absence.endDate}T00:00:00`).getTime() - new Date(`${absence.startDate}T00:00:00`).getTime()) / 86400000) + 1;
+    logEvent('absence_registered', {
+      absenceId: absence.id, deptId: absence.deptId, reason: absence.reason, reasonType: absence.reasonType,
+      startDate: absence.startDate, endDate: absence.endDate, days, via,
+    });
+  }
+
   const saveAbsence = useCallback((absence: Omit<Absence, 'id' | 'createdAt'>) => {
     const newAbsence: Absence = { ...absence, id: generateId(), createdAt: new Date().toISOString() };
+    logAbsence(newAbsence, 'manual');
     setAbsences(prev => {
       const next = [...prev, newAbsence];
       localStorage.setItem('or_absences', JSON.stringify(next));
@@ -293,6 +311,7 @@ export default function HomePage() {
 
   const importAbsences = useCallback((items: Omit<Absence, 'id' | 'createdAt'>[]) => {
     const newItems: Absence[] = items.map(a => ({ ...a, id: generateId(), createdAt: new Date().toISOString() }));
+    newItems.forEach(a => logAbsence(a, 'import'));
     setAbsences(prev => {
       const next = [...prev, ...newItems];
       localStorage.setItem('or_absences', JSON.stringify(next));
@@ -302,12 +321,14 @@ export default function HomePage() {
   }, [applyAutoReleaseForAbsence]);
 
   const deleteAbsence = useCallback((id: string) => {
+    const target = absences.find(a => a.id === id);
+    if (target) logEvent('absence_deleted', { absenceId: id, deptId: target.deptId, reason: target.reason, startDate: target.startDate, endDate: target.endDate });
     setAbsences(prev => {
       const next = prev.filter(a => a.id !== id);
       localStorage.setItem('or_absences', JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [absences]);
 
   if (!schedule.initialized || schedule.departments.length === 0) {
     return (
@@ -406,18 +427,28 @@ export default function HomePage() {
     );
   }
 
-  const openSlotCount = schedule.releasedSlots.filter(r => !r.claimedByDeptId).length;
-  const activeDept = schedule.departments.find(d => d.id === activeDeptId);
-  const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
-  const releasedByMe = schedule.releasedSlots.filter(r => r.ownerDeptId === activeDeptId).length;
-  const claimedByMe = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId).length;
-  const acquiredFromOtherDepts = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId && r.ownerDeptId !== activeDeptId).length;
-  const myPendingRequests = schedule.slotRequests.filter(r => r.requestingDeptId === activeDeptId && r.status === 'pending').length;
   const isManager = userRole === 'manager';
-  const deptInbox = deptNotifications.filter(item => item.deptId === activeDeptId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
-  const managerNotificationsSummary = deptNotifications.filter(item => item.status === 'queued').length;
-  const canViewDashboard = isManager;
-  const canEditAbsence = isManager || userRole === 'dept';
+  const activeDept = schedule.departments.find(d => d.id === activeDeptId);
+  const pendingRequests = schedule.slotRequests.filter(r => r.status === 'pending');
+  const pendingApprovalCount = pendingRequests.length;
+  const queuedNotificationCount = deptNotifications.filter(item => item.status === 'queued').length;
+
+  // 診療科部長向けの自科サマリー
+  const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
+  const sharingByMe = schedule.releasedSlots.filter(r => r.ownerDeptId === activeDeptId && !r.claimedByDeptId).length;
+  const acquiredFromOtherDepts = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId && r.ownerDeptId !== activeDeptId).length;
+  const myPendingRequests = pendingRequests.filter(r => r.requestingDeptId === activeDeptId).length;
+  const deptInbox = deptNotifications
+    .filter(item => item.deptId === activeDeptId && item.status === 'sent')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 3);
+
+  function handleLogout() {
+    logEvent('logout');
+    setIsLoggedIn(false);
+    localStorage.setItem('or_logged_in', 'false');
+    setLoginError('');
+  }
 
   function handleApproveRequest(requestId: string) {
     const req = schedule.slotRequests.find(r => r.id === requestId);
@@ -438,57 +469,74 @@ export default function HomePage() {
     });
   }
 
-  const workflowSteps = [
-    {
-      id: 'myslots' as const,
-      label: 'Step 1',
-      title: '自科の枠を確認',
-      description: '保有枠の状態と共有予定を確認して、空きが出る枠を登録します。',
-      action: '自科の枠を開く',
-    },
-    {
-      id: 'schedule' as const,
-      label: 'Step 2',
-      title: '週次グリッドで手術を入力',
-      description: '各日・各室の予定を見ながら、手術や不在を追加して確定させます。',
-      action: '週次グリッドへ',
-    },
-    {
-      id: 'board' as const,
-      label: 'Step 3',
-      title: '空き枠を引き受ける',
-      description: '他科の解放枠を見て、必要なときに自科で引き受けます。',
-      action: '空き枠ボードへ',
-    },
-  ];
+  // 部長の「引き受け」は承認待ちの申請として登録し、手術室管理者の承認で確定する
+  function handleClaimSlot(releaseId: string, deptId: string, deptName: string) {
+    const release = schedule.releasedSlots.find(r => r.id === releaseId);
+    if (!release || release.claimedByDeptId) return;
+
+    if (isManager) {
+      schedule.claimSlot(releaseId, deptId, deptName);
+      queueDepartmentNotifications({
+        ownerDeptName: release.ownerDeptName,
+        requestingDeptName: deptName,
+        date: release.date,
+        roomName: `手術室${release.roomId.replace('or', '')}`,
+        startHour: release.startHour,
+        endHour: release.endHour,
+      });
+      return;
+    }
+
+    const alreadyRequested = schedule.slotRequests.some(
+      r => r.releaseId === releaseId && r.requestingDeptId === deptId && r.status === 'pending',
+    );
+    if (alreadyRequested) return;
+
+    schedule.submitRequest({
+      releaseId,
+      date: release.date,
+      roomId: release.roomId,
+      requestingDeptId: deptId,
+      requestingDeptName: deptName,
+      procedure: '',
+      surgeonName: '',
+      wantedStartTime: release.availStartTime ?? `${release.startHour}:00`,
+      wantedEndTime: release.availEndTime ?? `${release.endHour}:00`,
+      notes: '引き受け申請',
+    });
+  }
+
+  const tabs: Array<{ id: View; label: string; badge?: number; badgeTone?: 'amber' | 'red' }> = isManager
+    ? [
+        { id: 'overview', label: '全体の空き状況' },
+        { id: 'board', label: '承認・空き枠', badge: pendingApprovalCount, badgeTone: 'amber' },
+        { id: 'schedule', label: '週次グリッド' },
+        { id: 'analytics', label: '分析' },
+      ]
+    : [
+        { id: 'myslots', label: '自科の枠', badge: myPendingRequests, badgeTone: 'amber' },
+        { id: 'schedule', label: '週次グリッド' },
+      ];
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* ── Header ── */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
-        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
-          {/* Logo */}
+        <div className="max-w-screen-2xl mx-auto px-4 py-2.5 flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
               <span className="text-white text-sm font-bold">OR</span>
             </div>
-            <div className="hidden sm:block">
-              <h1 className="text-base font-bold text-gray-900 leading-none">OR スケジューラ</h1>
-              <p className="text-xs text-gray-400">手術室稼働率改善システム</p>
-            </div>
+            <h1 className="hidden sm:block text-base font-bold text-gray-900 leading-none">OR スケジューラ</h1>
           </div>
 
-          <div className={`flex items-center gap-2 ml-2 rounded-xl px-3 py-1.5 border ${userRole === 'manager' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-            <span className="text-xs text-gray-500 whitespace-nowrap">立場:</span>
-            <span className={`text-sm font-bold ${userRole === 'manager' ? 'text-blue-700' : 'text-gray-800'}`}>
-              {userRole === 'manager' ? '手術室管理者' : `${activeDept?.name ?? '診療科'} 部長`}
-            </span>
-          </div>
-
-          {userRole === 'dept' && (
-            <div className="flex items-center gap-2 ml-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
-              <span className="text-xs text-gray-500 whitespace-nowrap">診療科:</span>
+          {/* 立場（部長は所属科もここで切替） */}
+          {isManager ? (
+            <span className="rounded-xl bg-blue-50 border border-blue-200 px-3 py-1.5 text-sm font-bold text-blue-700">手術室管理者</span>
+          ) : (
+            <div className="flex items-center gap-1 rounded-xl bg-gray-50 border border-gray-200 px-3 py-1.5">
               <select
+                aria-label="所属診療科"
                 className="text-sm font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
                 value={activeDeptId}
                 onChange={e => handleDeptSecurityChange(e.target.value)}
@@ -497,11 +545,12 @@ export default function HomePage() {
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
+              <span className="text-sm font-bold text-gray-800">部長</span>
             </div>
           )}
 
-          {userRole === 'dept' && pendingDeptId && (
-            <div className="flex items-center gap-2 ml-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
+          {!isManager && pendingDeptId && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
               <span className="text-xs text-amber-700 whitespace-nowrap">
                 {schedule.departments.find(d => d.id === pendingDeptId)?.name ?? '他診療科'}へ切替:
               </span>
@@ -531,304 +580,162 @@ export default function HomePage() {
             </div>
           )}
 
-          {userRole === 'manager' && (
-            <>
-              <div className="flex items-center gap-2 ml-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
-                <span className="text-xs text-gray-500 whitespace-nowrap">全科通知:</span>
-                <select
-                  className="text-sm font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                  value={notificationCadence}
-                  onChange={e => handleNotificationCadenceChange(e.target.value as NotificationCadence)}
-                >
-                  <option value="instant">その都度</option>
-                  <option value="30m">30分おき</option>
-                  <option value="1h">1時間おき</option>
-                  <option value="6h">6時間おき</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2 ml-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-1.5">
-                <span className="text-xs text-indigo-700 whitespace-nowrap">更新周期:</span>
-                <select
-                  className="text-sm font-bold text-indigo-800 bg-transparent focus:outline-none cursor-pointer"
-                  value={updateCycle}
-                  onChange={e => handleUpdateCycleChange(e.target.value as UpdateCycle)}
-                >
-                  <option value="annual">年次更新</option>
-                  <option value="quarterly">3か月更新</option>
-                  <option value="halfyearly">6か月更新</option>
-                </select>
-              </div>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsLoggedIn(false);
-              localStorage.setItem('or_logged_in', 'false');
-              setLoginError('');
-            }}
-            className="ml-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200"
-          >
-            ログイン切替
-          </button>
-
           {/* View tabs */}
-          <div className="flex bg-gray-100 rounded-lg p-1 gap-1 ml-2">
-            <button
-              onClick={() => setView('myslots')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'myslots' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              1. 自科の枠
-            </button>
-            <button
-              onClick={() => setView('schedule')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'schedule' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              2. 週次グリッド
-            </button>
-            {canViewDashboard && (
+          <nav className="flex bg-gray-100 rounded-lg p-1 gap-1">
+            {tabs.map(tab => (
               <button
-                onClick={() => setView('board')}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1 ${view === 'board' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                key={tab.id}
+                onClick={() => setView(tab.id)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 ${view === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                3. 空き枠ボード
-                {openSlotCount > 0 && (
-                  <span className="w-4 h-4 flex items-center justify-center bg-red-500 text-white text-xs rounded-full">{openSlotCount}</span>
+                {tab.label}
+                {!!tab.badge && (
+                  <span className={`min-w-4 h-4 px-1 flex items-center justify-center text-white text-[10px] font-bold rounded-full ${tab.badgeTone === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}>
+                    {tab.badge}
+                  </span>
                 )}
               </button>
-            )}
-            <button
-              onClick={() => setView('competition')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'competition' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              4. 競争状況
-            </button>
-          </div>
+            ))}
+          </nav>
 
           {/* Week nav (schedule view only) */}
           {view === 'schedule' && (
             <div className="flex items-center gap-1">
-              <button onClick={() => setWeekStart(w => subWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600">←</button>
-              <button onClick={() => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))} className="px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">今週</button>
+              <button onClick={() => setWeekStart(w => subWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600" aria-label="前の週">←</button>
+              <button onClick={() => setWeekStart(getOperatingWeekStart())} className="px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">今週</button>
               <span className="text-xs font-medium text-gray-600 whitespace-nowrap">{format(weekStart, 'M/d', { locale: ja })} 週</span>
-              <button onClick={() => setWeekStart(w => addWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600">→</button>
+              <button onClick={() => setWeekStart(w => addWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600" aria-label="次の週">→</button>
             </div>
           )}
 
           {/* Actions */}
           <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => setShowMasterModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
-            >
-              ⚙ 枠マスタ
-            </button>
-            <button
-              onClick={() => setShowImportModal(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg transition-colors border border-green-200"
-            >
-              📊 一括インポート
-            </button>
-            {canEditAbsence && (
-              <button
-                onClick={() => setShowAbsenceModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
-              >
-                📅 不在登録
-              </button>
+            {isManager && (
+              <>
+                <button
+                  onClick={() => setShowMasterModal(true)}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
+                >
+                  ⚙ 枠マスタ
+                </button>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="hidden sm:block px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg border border-green-200"
+                >
+                  📊 一括インポート
+                </button>
+              </>
             )}
+            <button
+              onClick={() => setShowAbsenceModal(true)}
+              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
+            >
+              📅 不在登録
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded-lg"
+            >
+              ログアウト
+            </button>
           </div>
         </div>
       </header>
 
       {/* ── Main ── */}
       <main className="max-w-screen-2xl mx-auto px-4 py-5">
-        {/* Stats */}
-        <StatsBar
-          weekStart={weekStart}
-          allocations={schedule.allocations}
-          surgeries={schedule.surgeries}
-          releasedSlots={schedule.releasedSlots}
-        />
-
-        {userRole === 'dept' && deptInbox.length > 0 && (
-          <section className="mb-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700">通知一覧</p>
-                <h3 className="text-base font-bold text-gray-900 mt-0.5">{activeDept?.name ?? '診療科'} への通知</h3>
-              </div>
-              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-indigo-700 border border-indigo-200">{deptInbox.filter(n => n.status === 'sent').length}件送信済</span>
-            </div>
-            <div className="space-y-2">
-              {deptInbox.map(item => (
-                <div key={item.id} className="rounded-xl border border-indigo-200 bg-white px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-bold text-gray-800">{item.title}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {item.status === 'sent' ? '送信済' : '予約中'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-1">{item.body}</p>
-                  <p className="text-[10px] text-gray-400 mt-1">予定: {new Date(item.scheduledAt).toLocaleString('ja-JP')}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {userRole === 'manager' && managerNotificationsSummary > 0 && (
-          <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600">通知スケジュール</p>
-                <h3 className="text-base font-bold text-gray-900 mt-0.5">全診療科への通知待ち</h3>
-              </div>
-              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 border border-slate-200">{managerNotificationsSummary}件</span>
-            </div>
-          </section>
-        )}
-
-        <section className="mb-5 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-indigo-50 p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-blue-600">入力の流れ</p>
-              <h2 className="text-lg font-bold text-gray-900 mt-0.5">{isManager ? '全診療科での基本操作' : `${activeDept?.name ?? '診療科'}での基本操作`}</h2>
-            </div>
-            <span className="text-xs text-gray-500 bg-white/80 border border-gray-200 rounded-full px-2.5 py-1">{isManager ? '全体の状況を見ながら運用します' : '最初にこの順番で進めると迷いにくいです'}</span>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-3">
-            {workflowSteps.map((step) => {
-              const active = view === step.id;
-              return (
-                <button
-                  key={step.id}
-                  onClick={() => setView(step.id)}
-                  className={`text-left rounded-xl border p-3.5 transition-all ${
-                    active
-                      ? 'border-blue-300 bg-white shadow-sm ring-2 ring-blue-100'
-                      : 'border-gray-200 bg-white/70 hover:border-blue-200 hover:bg-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold tracking-[0.12em] text-blue-700">{step.label}</span>
-                    <span className="text-[10px] text-gray-400">{step.action}</span>
-                  </div>
-                  <h3 className="mt-2 text-sm font-bold text-gray-800">{step.title}</h3>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-600">{step.description}</p>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {!isManager && (
-          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">競争状況</p>
-                <h3 className="text-base font-bold text-gray-900 mt-0.5">全員共有の枠獲得状況を確認したいときは別画面へ</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setView('competition')}
-                className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
-              >
-                競争状況を見る
+        {/* ── 管理者: 承認待ちをどの画面からでもワンクリックで処理 ── */}
+        {isManager && pendingApprovalCount > 0 && view !== 'board' && (
+          <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <h3 className="text-sm font-bold text-amber-900">承認待ちの申請 {pendingApprovalCount}件</h3>
+              <button type="button" onClick={() => setView('board')} className="text-xs font-bold text-amber-700 hover:underline">
+                空き枠と並べて確認 →
               </button>
             </div>
-          </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {pendingRequests.map(req => {
+                const release = schedule.releasedSlots.find(r => r.id === req.releaseId);
+                const competing = pendingRequests.filter(r => r.releaseId === req.releaseId).length;
+                return (
+                  <div key={req.id} className="flex items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-800 truncate">{release?.ownerDeptName ?? '—'} → {req.requestingDeptName}</p>
+                      <p className="text-[11px] text-gray-500">
+                        {format(new Date(`${req.date}T00:00:00`), 'M/d(E)', { locale: ja })} · 手術室{req.roomId.replace('or', '')} · {req.wantedStartTime}–{req.wantedEndTime}
+                        {competing > 1 && <span className="ml-1 font-bold text-red-600">競合{competing}科</span>}
+                      </p>
+                    </div>
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      <button type="button" onClick={() => handleApproveRequest(req.id)} className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg">
+                        承認
+                      </button>
+                      <button type="button" onClick={() => schedule.rejectRequest(req.id)} className="px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200">
+                        却下
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         )}
 
-        {view === 'competition' && (
-          <section className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">全員共有の競争状況</p>
-                <h3 className="text-base font-bold text-gray-900 mt-0.5">枠を獲得した診療科の詳細</h3>
+        {/* ── 部長: 自科サマリーと通知 ── */}
+        {!isManager && (
+          <section className="mb-5 grid gap-3 lg:grid-cols-[1fr_1fr]">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="rounded-xl border border-blue-100 bg-white p-3 shadow-sm">
+                <div className="text-[11px] text-blue-600 font-bold">保有枠（週）</div>
+                <div className="mt-1 text-2xl font-bold text-blue-700">{ownedByMe}</div>
               </div>
-              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-red-700 border border-red-200">詳細閲覧</span>
+              <div className="rounded-xl border border-purple-100 bg-white p-3 shadow-sm">
+                <div className="text-[11px] text-purple-600 font-bold">共有中</div>
+                <div className="mt-1 text-2xl font-bold text-purple-700">{sharingByMe}</div>
+              </div>
+              <div className="rounded-xl border border-amber-100 bg-white p-3 shadow-sm">
+                <div className="text-[11px] text-amber-600 font-bold">承認待ちの申請</div>
+                <div className="mt-1 text-2xl font-bold text-amber-700">{myPendingRequests}</div>
+              </div>
+              <div className="rounded-xl border border-cyan-100 bg-white p-3 shadow-sm">
+                <div className="text-[11px] text-cyan-600 font-bold">他科から獲得</div>
+                <div className="mt-1 text-2xl font-bold text-cyan-700">{acquiredFromOtherDepts}</div>
+              </div>
             </div>
-            <div className="mt-3 space-y-2">
-              {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
-                <p className="text-sm text-gray-600">まだ誰も枠を獲得していません。最初の引き受けが競争の始まりです。</p>
+            <div className="rounded-xl border border-indigo-100 bg-white p-3 shadow-sm">
+              <p className="text-[11px] font-bold text-indigo-600 mb-1.5">{activeDept?.name ?? '自科'}へのお知らせ</p>
+              {deptInbox.length === 0 ? (
+                <p className="text-xs text-gray-400">新しいお知らせはありません</p>
               ) : (
-                schedule.releasedSlots
-                  .filter(r => r.claimedByDeptId)
-                  .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
-                  .map(r => (
-                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-white px-3 py-2">
-                      <div>
-                        <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
-                        <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
-                      </div>
-                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得</span>
-                    </div>
-                  ))
+                <ul className="space-y-1">
+                  {deptInbox.map(item => (
+                    <li key={item.id} className="text-xs text-gray-700 leading-snug">
+                      <span className="text-gray-400 mr-1">{format(new Date(item.createdAt), 'M/d HH:mm', { locale: ja })}</span>
+                      {item.body}
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </section>
         )}
 
-        <section className="mb-5 grid gap-3 md:grid-cols-[1.4fr_1.1fr]">
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">自分の立場</p>
-                <h3 className="text-base font-bold text-gray-900">{activeDept?.name ?? '診療科'} の現況</h3>
-              </div>
-              <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-700">当事者</span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
-                <div className="text-[10px] text-blue-600 font-bold uppercase tracking-[0.08em]">保有枠</div>
-                <div className="mt-1 text-xl font-bold text-blue-700">{ownedByMe}</div>
-              </div>
-              <div className="rounded-xl border border-purple-100 bg-purple-50 p-3">
-                <div className="text-[10px] text-purple-600 font-bold uppercase tracking-[0.08em]">共有中</div>
-                <div className="mt-1 text-xl font-bold text-purple-700">{releasedByMe}</div>
-              </div>
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
-                <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-[0.08em]">引受済</div>
-                <div className="mt-1 text-xl font-bold text-emerald-700">{claimedByMe}</div>
-              </div>
-              <div className="rounded-xl border border-cyan-100 bg-cyan-50 p-3">
-                <div className="text-[10px] text-cyan-600 font-bold uppercase tracking-[0.08em]">他科枠獲得</div>
-                <div className="mt-1 text-xl font-bold text-cyan-700">{acquiredFromOtherDepts}</div>
-              </div>
-              <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
-                <div className="text-[10px] text-amber-600 font-bold uppercase tracking-[0.08em]">申請中</div>
-                <div className="mt-1 text-xl font-bold text-amber-700">{myPendingRequests}</div>
-              </div>
-            </div>
-          </div>
+        {/* ── 管理者: 全体の空き状況 ── */}
+        {view === 'overview' && isManager && (
+          <ManagerWeekOverview
+            allocations={schedule.allocations}
+            surgeries={schedule.surgeries}
+            releasedSlots={schedule.releasedSlots}
+            slotRequests={schedule.slotRequests}
+            departments={schedule.departments}
+            rooms={schedule.rooms}
+            onOpenBoard={() => setView('board')}
+          />
+        )}
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">編集権限</p>
-            <div className="mt-3 space-y-3">
-              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-blue-800">当事者</span>
-                  <span className="text-[10px] text-blue-700 bg-white px-2 py-0.5 rounded-full">自科のみ</span>
-                </div>
-                <p className="mt-1 text-xs text-blue-700">自科の保有枠を共有・取消・申請の判定まで操作できます。</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-700">他科</span>
-                  <span className="text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded-full">閲覧 + 申請</span>
-                </div>
-                <p className="mt-1 text-xs text-slate-600">共有中の枠は申請・引き受けだけ可能で、当事者にのみ決定権があります。</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── 自科の枠ビュー ── */}
-        {view === 'myslots' && (
+        {/* ── 部長: 自科の枠 ── */}
+        {view === 'myslots' && !isManager && (
           <DeptSlotView
             activeDeptId={activeDeptId}
             currentUserRole={userRole}
@@ -846,73 +753,29 @@ export default function HomePage() {
           />
         )}
 
-        {view === 'competition' && (
-          <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">競争状況詳細</p>
-                <h3 className="text-lg font-bold text-gray-900 mt-0.5">全診療科の枠獲得履歴</h3>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
-                <p className="text-sm text-gray-600">まだ引き受けられた枠はありません。</p>
-              ) : (
-                schedule.releasedSlots
-                  .filter(r => r.claimedByDeptId)
-                  .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
-                  .map(r => (
-                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
-                      <div>
-                        <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
-                        <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
-                      </div>
-                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得済</span>
-                    </div>
-                  ))
-              )}
-            </div>
-          </section>
-        )}
-
-        {userRole === 'dept' && !canViewDashboard && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            部長権限では全体ダッシュボードは表示されません。自科の枠と週次グリッドのみを確認できます。
-          </div>
-        )}
-
         {/* ── 週次グリッド ── */}
         {view === 'schedule' && (
-          <div className="space-y-5">
-            <WeeklySchedule
-              weekStart={weekStart}
-              allocations={schedule.allocations}
-              surgeries={schedule.surgeries}
-              releasedSlots={schedule.releasedSlots}
-              departments={schedule.departments}
-              rooms={schedule.rooms}
-              currentUserRole={userRole}
-              currentDeptId={activeDeptId}
-              onAddSurgery={schedule.addSurgery}
-              onUpdateSurgery={schedule.updateSurgery}
-              onDeleteSurgery={schedule.deleteSurgery}
-              onReleaseSlot={schedule.releaseSlot}
-              onClaimSlot={schedule.claimSlot}
-              onCancelRelease={schedule.cancelRelease}
-            />
-            <DeptRanking
-              weekStart={weekStart}
-              allocations={schedule.allocations}
-              surgeries={schedule.surgeries}
-              releasedSlots={schedule.releasedSlots}
-              slotRequests={schedule.slotRequests}
-              departments={schedule.departments}
-            />
-          </div>
+          <WeeklySchedule
+            weekStart={weekStart}
+            allocations={schedule.allocations}
+            surgeries={schedule.surgeries}
+            releasedSlots={schedule.releasedSlots}
+            departments={schedule.departments}
+            rooms={schedule.rooms}
+            currentUserRole={userRole}
+            currentDeptId={activeDeptId}
+            onAddSurgery={schedule.addSurgery}
+            onUpdateSurgery={schedule.updateSurgery}
+            onDeleteSurgery={schedule.deleteSurgery}
+            onReleaseSlot={schedule.releaseSlot}
+            slotRequests={schedule.slotRequests}
+            onClaimSlot={handleClaimSlot}
+            onCancelRelease={schedule.cancelRelease}
+          />
         )}
 
-        {/* ── 空き枠ボード ── */}
-        {view === 'board' && canViewDashboard && (
+        {/* ── 管理者: 承認・空き枠 ── */}
+        {view === 'board' && isManager && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <OpenSlotBoard
               releasedSlots={schedule.releasedSlots}
@@ -925,15 +788,16 @@ export default function HomePage() {
               currentDeptId={activeDeptId}
               notificationCadence={notificationCadence}
               slotRequests={schedule.slotRequests}
-              onClaim={schedule.claimSlot}
+              onClaim={handleClaimSlot}
               onCancelRelease={schedule.cancelRelease}
               onApproveRequest={handleApproveRequest}
+              onRejectRequest={schedule.rejectRequest}
             />
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-gray-900">登録済み不在・学会</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">事前に登録された不在期間</p>
+                  <p className="text-xs text-gray-500 mt-0.5">登録すると該当する枠が自動で共有されます</p>
                 </div>
                 <button
                   onClick={() => setShowAbsenceModal(true)}
@@ -949,7 +813,7 @@ export default function HomePage() {
                     登録された不在はありません
                   </div>
                 ) : (
-                  absences.sort((a, b) => a.startDate.localeCompare(b.startDate)).map(absence => (
+                  [...absences].sort((a, b) => a.startDate.localeCompare(b.startDate)).map(absence => (
                     <div key={absence.id} className="px-5 py-3 flex items-start gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -968,26 +832,64 @@ export default function HomePage() {
             </div>
           </div>
         )}
+
+        {/* ── 管理者: 分析 ── */}
+        {view === 'analytics' && isManager && (
+          <AnalyticsDashboard
+            departments={schedule.departments}
+            releasedSlots={schedule.releasedSlots}
+            queuedNotifications={queuedNotificationCount}
+            notificationCadence={notificationCadence}
+            updateCycle={updateCycle}
+            onNotificationCadenceChange={handleNotificationCadenceChange}
+            onUpdateCycleChange={handleUpdateCycleChange}
+          >
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-base font-bold text-gray-900">稼働率（{format(weekStart, 'M/d', { locale: ja })} 週）</h3>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setWeekStart(w => subWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600" aria-label="前の週">←</button>
+                  <button onClick={() => setWeekStart(getOperatingWeekStart())} className="px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg">今週</button>
+                  <button onClick={() => setWeekStart(w => addWeeks(w, 1))} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600" aria-label="次の週">→</button>
+                </div>
+              </div>
+              <StatsBar
+                weekStart={weekStart}
+                allocations={schedule.allocations}
+                surgeries={schedule.surgeries}
+                releasedSlots={schedule.releasedSlots}
+              />
+              <DeptRanking
+                weekStart={weekStart}
+                allocations={schedule.allocations}
+                surgeries={schedule.surgeries}
+                releasedSlots={schedule.releasedSlots}
+                slotRequests={schedule.slotRequests}
+                departments={schedule.departments}
+              />
+            </section>
+          </AnalyticsDashboard>
+        )}
       </main>
 
       {/* ── Modals ── */}
       {showAbsenceModal && (
         <AbsenceModal
           departments={schedule.departments}
-          defaultDeptId={userRole === 'manager' ? (schedule.departments[0]?.id ?? activeDeptId) : activeDeptId}
-          managerMode={userRole === 'manager'}
+          defaultDeptId={isManager ? (schedule.departments[0]?.id ?? activeDeptId) : activeDeptId}
+          managerMode={isManager}
           onSave={saveAbsence}
           onClose={() => setShowAbsenceModal(false)}
         />
       )}
-      {showImportModal && (
+      {showImportModal && isManager && (
         <AbsenceImportModal
           departments={schedule.departments}
           onImport={importAbsences}
           onClose={() => setShowImportModal(false)}
         />
       )}
-      {showMasterModal && (
+      {showMasterModal && isManager && (
         <AllocationMasterModal
           allocations={schedule.allocations}
           departments={schedule.departments}

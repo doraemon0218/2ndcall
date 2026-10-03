@@ -5,7 +5,7 @@ import { format, parseISO } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { SlotAllocation, Surgery, ReleasedSlot, Department, SlotRequest } from '@/lib/types';
 import { getPeriodLabel } from '@/lib/types';
-import { getDeptBgStyle, getWeekDates, allocationStartHHMM, allocationEndHHMM, isDeadlinePassed, isRequestOpen, getRequestDeadline, minutesToHHMM } from '@/lib/utils';
+import { getDeptBgStyle, getWeekDates, allocationStartHHMM, allocationEndHHMM, isDeadlinePassed, getRequestDeadline, minutesToHHMM } from '@/lib/utils';
 import { addDays } from 'date-fns';
 
 interface Props {
@@ -58,9 +58,12 @@ export default function DeptSlotView({
   const activeDeptColor = activeDept ? getDeptBgStyle(activeDept.color) : '#6b7280';
 
   const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const allDates: Date[] = [];
   for (let w = 0; w < NUM_WEEKS; w++) {
-    getWeekDates(addDays(today, w * 7)).forEach(d => allDates.push(d));
+    getWeekDates(addDays(today, w * 7)).forEach(d => {
+      if (d >= todayStart) allDates.push(d);
+    });
   }
 
   // Own department's slots
@@ -95,25 +98,210 @@ export default function DeptSlotView({
       const myRequest = requests.find(req => req.requestingDeptId === activeDeptId);
       const deadline = getRequestDeadline(rDate);
       const deadlinePassed = isDeadlinePassed(rDate);
-      const open = isRequestOpen(rDate);
-      return { release: r, rDate, requests, myRequest, deadline, deadlinePassed, open };
+      return { release: r, rDate, requests, myRequest, deadline, deadlinePassed };
     })
-    .filter(r => r.rDate >= today || r.release.claimedByDeptId)
+    .filter(r => r.rDate >= todayStart)
     .sort((a, b) => a.release.date.localeCompare(b.release.date));
 
   const ownKey = (alloc: SlotAllocation, dateStr: string) => `${alloc.id}-${dateStr}`;
 
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">入力の進め方</p>
-            <p className="text-sm font-bold text-gray-800 mt-0.5">まずは自科の枠状況を確認して、次に共有または申請を行います</p>
-          </div>
-          <span className="text-xs text-amber-800 bg-white/80 border border-amber-200 rounded-full px-2 py-0.5">1. 確認 2. 共有 3. 申請</span>
+      {/* ── 他科の空き枠（引き受け申請） ── */}
+      {otherReleased.length > 0 && (
+      <div className="bg-white rounded-2xl border-2 border-purple-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-gray-900">🔓 他科が共有した空き枠 {otherReleased.filter(o => !o.release.claimedByDeptId).length}件</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            「引き受けを申請」を押すと手術室管理者に届き、承認されると確定します。
+          </p>
         </div>
+
+        {otherReleased.length === 0 ? (
+          <div className="text-center py-10 text-gray-400 text-sm">他科から共有されている空き枠はありません</div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {otherReleased.map(({ release: r, rDate, requests, myRequest, deadline, deadlinePassed }) => {
+              const ownerDept = departments.find(d => d.id === r.ownerDeptId);
+              const ownerColor = ownerDept ? getDeptBgStyle(ownerDept.color) : '#9ca3af';
+              const dayLabel = DOW_LABELS[rDate.getDay() === 0 ? 7 : rDate.getDay()];
+              const pendingReqs = requests.filter(req => req.status === 'pending');
+              const approvedReq = requests.find(req => req.status === 'approved');
+              const isReqOpen = requesting === r.id;
+              const reqF = requestForm[r.id] ?? { procedure: '', surgeonName: '', wantedStart: r.availStartTime ?? `${r.startHour}:00`, wantedEnd: r.availEndTime ?? `${r.endHour}:00`, notes: '' };
+
+              return (
+                <div key={r.id} className={`px-5 py-3.5 ${approvedReq ? 'bg-green-50/30' : 'bg-purple-50/20'}`}>
+                  <div className="flex items-start gap-3">
+                    {/* Date */}
+                    <div className="flex-shrink-0 text-center w-14">
+                      <div className="text-xs text-gray-400">{format(rDate, 'M/d', { locale: ja })}</div>
+                      <div className="text-xl font-bold text-gray-800 leading-tight">{dayLabel}</div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ownerColor }} />
+                        <span className="text-sm font-bold text-gray-800">{r.ownerDeptName}</span>
+                        <span className="text-xs text-gray-500">
+                          手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00
+                        </span>
+                        {approvedReq && (
+                          <span className="px-2 py-0.5 text-xs font-bold bg-green-100 text-green-700 rounded-full">
+                            ✓ {approvedReq.requestingDeptName} 確定
+                          </span>
+                        )}
+                        {!approvedReq && deadlinePassed && pendingReqs.length > 1 && (
+                          <span className="px-2 py-0.5 text-xs font-bold bg-yellow-100 text-yellow-700 rounded-full">
+                            交渉中 ({pendingReqs.length}科申請)
+                          </span>
+                        )}
+                      </div>
+                      {r.message && <p className="text-xs text-gray-500 mt-0.5">{r.message}</p>}
+
+                      {/* Deadline info */}
+                      {!approvedReq && !deadlinePassed && (
+                        <p className="text-xs mt-0.5 font-medium text-gray-400">
+                          申請締切 {format(deadline, 'M/d(E) HH:mm', { locale: ja })}
+                        </p>
+                      )}
+
+                      {/* Pending requests overview */}
+                      {pendingReqs.length > 0 && (
+                        <div className="mt-2 flex gap-1 flex-wrap">
+                          {pendingReqs.map(req => {
+                            const reqDept = departments.find(d => d.id === req.requestingDeptId);
+                            const reqColor = reqDept ? getDeptBgStyle(reqDept.color) : '#9ca3af';
+                            return (
+                              <span key={req.id} className="flex items-center gap-1 px-2 py-0.5 bg-white border border-gray-200 rounded-full text-xs">
+                                <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: reqColor }} />
+                                {req.requestingDeptName}
+                                {req.requestingDeptId === activeDeptId && (
+                                  <button onClick={() => onCancelRequest(req.id)} className="text-gray-300 hover:text-red-400 ml-0.5">✕</button>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Request form */}
+                      {isReqOpen && !myRequest && !approvedReq && (
+                        <div className="mt-2 bg-white border border-blue-200 rounded-xl p-3 space-y-2">
+                          <p className="text-xs font-bold text-blue-700">希望内容を入力してください</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              placeholder="術式（例: 膝人工関節）"
+                              value={reqF.procedure}
+                              onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, procedure: e.target.value } }))}
+                            />
+                            <input
+                              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              placeholder="執刀医"
+                              value={reqF.surgeonName}
+                              onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, surgeonName: e.target.value } }))}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 font-medium">希望する時間帯（1/4日単位で指定可）</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">開始</label>
+                              <input
+                                type="time"
+                                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                value={reqF.wantedStart}
+                                onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, wantedStart: e.target.value } }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-0.5">終了</label>
+                              <input
+                                type="time"
+                                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                value={reqF.wantedEnd}
+                                onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, wantedEnd: e.target.value } }))}
+                              />
+                            </div>
+                          </div>
+                          <input
+                            className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            placeholder="備考（緊急度など）"
+                            value={reqF.notes}
+                            onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, notes: e.target.value } }))}
+                          />
+                          <div className="flex gap-2">
+                            <button onClick={() => setRequesting(null)} className="flex-1 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg">戻る</button>
+                            <button
+                              onClick={() => {
+                                onSubmitRequest({
+                                  releaseId: r.id, date: r.date, roomId: r.roomId,
+                                  requestingDeptId: activeDeptId, requestingDeptName: activeDept?.name ?? '',
+                                  procedure: reqF.procedure, surgeonName: reqF.surgeonName,
+                                  wantedStartTime: reqF.wantedStart || (r.availStartTime ?? `${r.startHour}:00`),
+                                  wantedEndTime: reqF.wantedEnd || (r.availEndTime ?? `${r.endHour}:00`),
+                                  notes: reqF.notes,
+                                });
+                                setRequesting(null);
+                              }}
+                              className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                            >
+                              希望申請を送る
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action */}
+                    <div className="flex-shrink-0">
+                      {!approvedReq && !myRequest && !r.claimedByDeptId && (
+                        <div className="flex flex-col items-end gap-1">
+                          <button
+                            onClick={() => onSubmitRequest({
+                              releaseId: r.id, date: r.date, roomId: r.roomId,
+                              requestingDeptId: activeDeptId, requestingDeptName: activeDept?.name ?? '',
+                              procedure: '', surgeonName: '',
+                              wantedStartTime: r.availStartTime ?? `${r.startHour}:00`,
+                              wantedEndTime: r.availEndTime ?? `${r.endHour}:00`,
+                              notes: '',
+                            })}
+                            className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                          >
+                            引き受けを申請
+                          </button>
+                          <button
+                            onClick={() => setRequesting(isReqOpen ? null : r.id)}
+                            className="text-[10px] text-blue-600 hover:underline"
+                          >
+                            {isReqOpen ? '閉じる' : '術式・時間を添えて申請'}
+                          </button>
+                        </div>
+                      )}
+                      {myRequest && myRequest.status === 'pending' && (
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 rounded-lg border border-amber-200">
+                            ⏳ 承認待ち
+                          </span>
+                          <button onClick={() => onCancelRequest(myRequest.id)} className="text-[10px] text-gray-400 hover:text-red-500">
+                            申請を取り消す
+                          </button>
+                        </div>
+                      )}
+                      {approvedReq?.requestingDeptId === activeDeptId && (
+                        <span className="px-3 py-1.5 text-xs font-bold text-green-700 bg-green-100 rounded-lg">
+                          ✓ 確定
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+      )}
 
       {/* ── 自科の保有枠 ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -313,180 +501,6 @@ export default function DeptSlotView({
         )}
       </div>
 
-      {/* ── 他科の空き枠（希望申請） ── */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
-          <h3 className="font-bold text-gray-900">他科の空き枠に希望申請</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            金曜日 正午が申請締め切りです。複数申請があった場合は締め切り後に当事者間で交渉します。
-          </p>
-        </div>
-
-        {otherReleased.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">他科から共有されている空き枠はありません</div>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {otherReleased.map(({ release: r, rDate, requests, myRequest, deadline, deadlinePassed, open }) => {
-              const ownerDept = departments.find(d => d.id === r.ownerDeptId);
-              const ownerColor = ownerDept ? getDeptBgStyle(ownerDept.color) : '#9ca3af';
-              const dayLabel = DOW_LABELS[rDate.getDay() === 0 ? 7 : rDate.getDay()];
-              const pendingReqs = requests.filter(req => req.status === 'pending');
-              const approvedReq = requests.find(req => req.status === 'approved');
-              const isReqOpen = requesting === r.id;
-              const reqF = requestForm[r.id] ?? { procedure: '', surgeonName: '', wantedStart: r.availStartTime ?? `${r.startHour}:00`, wantedEnd: r.availEndTime ?? `${r.endHour}:00`, notes: '' };
-
-              return (
-                <div key={r.id} className={`px-5 py-3.5 ${approvedReq ? 'bg-green-50/30' : 'bg-purple-50/20'}`}>
-                  <div className="flex items-start gap-3">
-                    {/* Date */}
-                    <div className="flex-shrink-0 text-center w-14">
-                      <div className="text-xs text-gray-400">{format(rDate, 'M/d', { locale: ja })}</div>
-                      <div className="text-xl font-bold text-gray-800 leading-tight">{dayLabel}</div>
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ownerColor }} />
-                        <span className="text-sm font-bold text-gray-800">{r.ownerDeptName}</span>
-                        <span className="text-xs text-gray-500">
-                          手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00
-                        </span>
-                        {approvedReq && (
-                          <span className="px-2 py-0.5 text-xs font-bold bg-green-100 text-green-700 rounded-full">
-                            ✓ {approvedReq.requestingDeptName} 確定
-                          </span>
-                        )}
-                        {!approvedReq && deadlinePassed && pendingReqs.length > 1 && (
-                          <span className="px-2 py-0.5 text-xs font-bold bg-yellow-100 text-yellow-700 rounded-full">
-                            交渉中 ({pendingReqs.length}科申請)
-                          </span>
-                        )}
-                      </div>
-                      {r.message && <p className="text-xs text-gray-500 mt-0.5">{r.message}</p>}
-
-                      {/* Deadline info */}
-                      {!approvedReq && (
-                        <p className={`text-xs mt-0.5 font-medium ${deadlinePassed ? 'text-red-500' : 'text-gray-400'}`}>
-                          申請締め切り: {format(deadline, 'M月d日(E) HH:mm', { locale: ja })}
-                          {deadlinePassed ? ' — 締め切り済' : open ? ' — 申請受付中' : ' — まだ受付前'}
-                        </p>
-                      )}
-
-                      {/* Pending requests overview */}
-                      {pendingReqs.length > 0 && (
-                        <div className="mt-2 flex gap-1 flex-wrap">
-                          {pendingReqs.map(req => {
-                            const reqDept = departments.find(d => d.id === req.requestingDeptId);
-                            const reqColor = reqDept ? getDeptBgStyle(reqDept.color) : '#9ca3af';
-                            return (
-                              <span key={req.id} className="flex items-center gap-1 px-2 py-0.5 bg-white border border-gray-200 rounded-full text-xs">
-                                <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: reqColor }} />
-                                {req.requestingDeptName}
-                                {req.requestingDeptId === activeDeptId && (
-                                  <button onClick={() => onCancelRequest(req.id)} className="text-gray-300 hover:text-red-400 ml-0.5">✕</button>
-                                )}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Request form */}
-                      {isReqOpen && !myRequest && !approvedReq && (
-                        <div className="mt-2 bg-white border border-blue-200 rounded-xl p-3 space-y-2">
-                          <p className="text-xs font-bold text-blue-700">希望内容を入力してください</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <input
-                              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              placeholder="術式（例: 膝人工関節）"
-                              value={reqF.procedure}
-                              onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, procedure: e.target.value } }))}
-                            />
-                            <input
-                              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              placeholder="執刀医"
-                              value={reqF.surgeonName}
-                              onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, surgeonName: e.target.value } }))}
-                            />
-                          </div>
-                          <p className="text-xs text-gray-500 font-medium">希望する時間帯（1/4日単位で指定可）</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-0.5">開始</label>
-                              <input
-                                type="time"
-                                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                value={reqF.wantedStart}
-                                onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, wantedStart: e.target.value } }))}
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-0.5">終了</label>
-                              <input
-                                type="time"
-                                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                value={reqF.wantedEnd}
-                                onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, wantedEnd: e.target.value } }))}
-                              />
-                            </div>
-                          </div>
-                          <input
-                            className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            placeholder="備考（緊急度など）"
-                            value={reqF.notes}
-                            onChange={e => setRequestForm(p => ({ ...p, [r.id]: { ...reqF, notes: e.target.value } }))}
-                          />
-                          <div className="flex gap-2">
-                            <button onClick={() => setRequesting(null)} className="flex-1 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg">戻る</button>
-                            <button
-                              onClick={() => {
-                                onSubmitRequest({
-                                  releaseId: r.id, date: r.date, roomId: r.roomId,
-                                  requestingDeptId: activeDeptId, requestingDeptName: activeDept?.name ?? '',
-                                  procedure: reqF.procedure, surgeonName: reqF.surgeonName,
-                                  wantedStartTime: reqF.wantedStart || (r.availStartTime ?? `${r.startHour}:00`),
-                                  wantedEndTime: reqF.wantedEnd || (r.availEndTime ?? `${r.endHour}:00`),
-                                  notes: reqF.notes,
-                                });
-                                setRequesting(null);
-                              }}
-                              className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
-                            >
-                              希望申請を送る
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Action */}
-                    <div className="flex-shrink-0">
-                      {!approvedReq && !myRequest && (open || !deadlinePassed) && (
-                        <button
-                          onClick={() => setRequesting(isReqOpen ? null : r.id)}
-                          className="px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors"
-                        >
-                          希望申請
-                        </button>
-                      )}
-                      {myRequest && myRequest.status === 'pending' && (
-                        <span className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg border border-blue-200">
-                          申請済み
-                        </span>
-                      )}
-                      {approvedReq?.requestingDeptId === activeDeptId && (
-                        <span className="px-3 py-1.5 text-xs font-bold text-green-700 bg-green-100 rounded-lg">
-                          ✓ 確定
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

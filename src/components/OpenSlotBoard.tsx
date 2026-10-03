@@ -34,10 +34,11 @@ interface Props {
   onClaim: (releaseId: string, deptId: string, deptName: string) => void;
   onCancelRelease: (releaseId: string) => void;
   onApproveRequest?: (requestId: string) => void;
+  onRejectRequest?: (requestId: string) => void;
 }
 
 export default function OpenSlotBoard({
-  releasedSlots, absences, departments, rooms, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', notificationCadence = 'instant', slotRequests = [], onClaim, onCancelRelease, onApproveRequest
+  releasedSlots, absences, departments, rooms, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', notificationCadence = 'instant', slotRequests = [], onClaim, onCancelRelease, onApproveRequest, onRejectRequest
 }: Props) {
   const today = new Date();
   const [tab, setTab] = useState<'advance' | 'urgent'>('urgent');
@@ -325,7 +326,7 @@ export default function OpenSlotBoard({
         </button>
       </div>
 
-      {currentUserRole === 'manager' && pendingRequests.length > 0 && (
+      {currentUserRole === 'manager' && (
         <div className="border-b border-gray-100 bg-amber-50/60 p-4">
           <div className="flex items-center justify-between gap-2 mb-3">
             <div>
@@ -334,6 +335,9 @@ export default function OpenSlotBoard({
             </div>
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">{pendingRequests.length}件</span>
           </div>
+          {pendingRequests.length === 0 && (
+            <p className="text-xs text-gray-500">現在、承認待ちの申請はありません。診療科部長が週次グリッドで「引受」を押すとここに表示されます。</p>
+          )}
           <div className="space-y-2">
             {pendingRequests.map(req => {
               const release = releasedSlots.find(r => r.id === req.releaseId);
@@ -342,16 +346,25 @@ export default function OpenSlotBoard({
                 <div key={req.id} className="rounded-xl border border-amber-200 bg-white px-3 py-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
-                      <p className="text-xs font-bold text-gray-800">{req.requestingDeptName} が申請</p>
+                      <p className="text-xs font-bold text-gray-800">{release?.ownerDeptName ?? ownerDept?.name ?? '—'} → {req.requestingDeptName}</p>
                       <p className="text-[11px] text-gray-500 mt-0.5">{req.date} · 手術室{req.roomId.replace('or', '')} · {req.wantedStartTime}–{req.wantedEndTime}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onApproveRequest?.(req.id)}
-                      className="px-2.5 py-1 text-[10px] font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
-                    >
-                      承認
-                    </button>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onApproveRequest?.(req.id)}
+                        className="px-2.5 py-1 text-[10px] font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
+                      >
+                        承認
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRejectRequest?.(req.id)}
+                        className="px-2.5 py-1 text-[10px] text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200"
+                      >
+                        却下
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
                     <span>{req.procedure || '術式未記載'}</span>
