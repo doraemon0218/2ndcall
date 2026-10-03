@@ -9,12 +9,14 @@ interface Props {
   date: string;
   surgery?: Surgery | null;
   departments: Department[];
+  currentUserRole?: 'manager' | 'dept';
+  currentDeptId?: string;
   onSave: (surgery: Omit<Surgery, 'id'>) => void;
   onDelete?: (id: string) => void;
   onClose: () => void;
 }
 
-export default function SurgeryModal({ allocation, date, surgery, departments, onSave, onDelete, onClose }: Props) {
+export default function SurgeryModal({ allocation, date, surgery, departments, currentUserRole = 'manager', currentDeptId = '', onSave, onDelete, onClose }: Props) {
   const defaultStart = allocationStartHHMM(allocation);
   const defaultEnd = allocationEndHHMM(allocation);
 
@@ -50,6 +52,12 @@ export default function SurgeryModal({ allocation, date, surgery, departments, o
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (currentUserRole === 'dept') {
+      if (!currentDeptId || allocation.deptId !== currentDeptId || form.deptId !== currentDeptId) {
+        onClose();
+        return;
+      }
+    }
     onSave({
       ...form,
       date,

@@ -1,5 +1,17 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## プロジェクト記録
+
+本プロジェクトの要求整理、設計変更、残課題、運用ルールの記録は [docs/requirement-log.md](docs/requirement-log.md) に残しています。
+
+- 役割に応じたログイン制御
+- 自診療科のみの枠開放制限
+- 他診療科による予定手術の追加・編集・削除防止
+- 学会/不在による自動空き枠共有
+- 全科通知と移動履歴の整理
+- 管理者向け日別空き枠・診療科フィルタ表示
+- 残課題として更新周期の実運用連動や分析エクスポートを継続検討
+
 ## Getting Started
 
 First, run the development server:

@@ -1,7 +1,7 @@
 import { Department, OperatingRoom, SlotAllocation, Surgery, ReleasedSlot, SlotRequest } from './types';
 import { DEFAULT_DEPARTMENTS, DEFAULT_ROOMS, DEFAULT_ALLOCATIONS, getDemoSurgeries } from './initialData';
 
-const SCHEMA_VERSION = '4'; // 型変更のたびにインクリメント
+const SCHEMA_VERSION = '5'; // 型変更のたびにインクリメント
 const VERSION_KEY = 'or_schema_version';
 
 const KEYS = {

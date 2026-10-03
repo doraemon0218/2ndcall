@@ -29,6 +29,7 @@ interface CellState {
 export default function AllocationMasterModal({ allocations, departments, rooms, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<SlotAllocation[]>(allocations);
   const [editing, setEditing] = useState<CellState | null>(null);
+  const [updateCycle, setUpdateCycle] = useState<'annual' | 'quarterly' | 'halfyearly'>('annual');
 
   function getAlloc(roomId: string, dow: number, period: Period): SlotAllocation | undefined {
     return draft.find(a => a.roomId === roomId && a.dayOfWeek === dow && a.period === period);
@@ -97,6 +98,24 @@ export default function AllocationMasterModal({ allocations, departments, rooms,
               {d.name}
             </span>
           ))}
+          <div className="ml-auto flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700">更新周期</span>
+            <select
+              value={updateCycle}
+              onChange={e => setUpdateCycle(e.target.value as 'annual' | 'quarterly' | 'halfyearly')}
+              className="text-xs font-bold text-indigo-800 bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="annual">年次更新</option>
+              <option value="quarterly">3か月更新</option>
+              <option value="halfyearly">6か月更新</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="px-6 py-3 border-b border-gray-100 text-xs text-gray-600">
+          {updateCycle === 'annual' && '現在は年次更新を前提とした枠配分です。'}
+          {updateCycle === 'quarterly' && '四半期単位で枠を再調整できる設定です。'}
+          {updateCycle === 'halfyearly' && '半年単位で枠を再調整できる設定です。'}
         </div>
 
         {/* Matrix */}

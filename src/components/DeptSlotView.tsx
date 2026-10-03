@@ -10,6 +10,7 @@ import { addDays } from 'date-fns';
 
 interface Props {
   activeDeptId: string;
+  currentUserRole?: 'manager' | 'dept';
   departments: Department[];
   allocations: SlotAllocation[];
   surgeries: Surgery[];
@@ -40,7 +41,7 @@ const DOW_LABELS = ['', '月', '火', '水', '木', '金', '土', '日'];
 const NUM_WEEKS = 3;
 
 export default function DeptSlotView({
-  activeDeptId, departments, allocations, surgeries,
+  activeDeptId, currentUserRole = 'dept', departments, allocations, surgeries,
   releasedSlots, slotRequests,
   onReleaseSlot, onCancelRelease, onSubmitRequest,
   onApproveRequest, onRejectRequest, onCancelRequest,
@@ -203,7 +204,7 @@ export default function DeptSlotView({
                                   {req.procedure && <span className="text-xs text-gray-500 ml-1.5">{req.procedure}</span>}
                                   {req.surgeonName && <span className="text-xs text-gray-400 ml-1.5">/ {req.surgeonName}</span>}
                                 </div>
-                                {deadlinePassed && (
+                                {deadlinePassed && currentUserRole === 'manager' ? (
                                   <div className="flex gap-1.5">
                                     <button
                                       onClick={() => onApproveRequest(req.id)}
@@ -218,7 +219,9 @@ export default function DeptSlotView({
                                       却下
                                     </button>
                                   </div>
-                                )}
+                                ) : deadlinePassed ? (
+                                  <div className="text-[10px] text-gray-500 font-medium">承認は手術室管理者のみ</div>
+                                ) : null}
                               </div>
                             );
                           })}

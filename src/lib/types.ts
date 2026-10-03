@@ -86,6 +86,7 @@ export interface SlotRequest {
 
 // 空き枠解放（部長間共有）
 export type SlotReasonType = 'positive' | 'negative' | 'neutral';
+export type ReleasedSlotStatus = 'open' | 'done';
 
 export interface ReleasedSlot {
   id: string;
@@ -106,6 +107,7 @@ export interface ReleasedSlot {
   reasonType?: SlotReasonType;
   reasonLabel?: string;
   source?: 'manual' | 'absence' | 'other';
+  status?: ReleasedSlotStatus;
   claimedByDeptId?: string;
   claimedByDeptName?: string;
   claimedAt?: string;

@@ -14,15 +14,28 @@ import AllocationMasterModal from '@/components/AllocationMasterModal';
 import DeptSlotView from '@/components/DeptSlotView';
 import { generateId } from '@/lib/utils';
 
-type View = 'schedule' | 'myslots' | 'board';
+type View = 'schedule' | 'myslots' | 'board' | 'competition';
 type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
+type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
+type DeptNotificationStatus = 'queued' | 'sent';
+
+interface DeptNotification {
+  id: string;
+  deptId: string;
+  deptName: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  scheduledAt: string;
+  status: DeptNotificationStatus;
+}
 
 export default function HomePage() {
   const schedule = useSchedule();
   const [weekStart, setWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [absences, setAbsences] = useState<Absence[]>([]);
-  const [view, setView] = useState<View>('myslots');
+  const [view, setView] = useState<View>('board');
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showMasterModal, setShowMasterModal] = useState(false);
@@ -35,6 +48,8 @@ export default function HomePage() {
   const [loginDeptId, setLoginDeptId] = useState('');
   const [loginError, setLoginError] = useState('');
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
+  const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
+  const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
 
   useEffect(() => {
     const raw = localStorage.getItem('or_absences');
@@ -59,6 +74,7 @@ export default function HomePage() {
     if (savedRole === 'manager' || savedRole === 'dept') {
       setUserRole(savedRole);
       setLoginRole(savedRole);
+      setView(savedRole === 'manager' ? 'board' : 'myslots');
     }
   }, []);
 
@@ -67,6 +83,37 @@ export default function HomePage() {
     if (savedCadence === 'instant' || savedCadence === '30m' || savedCadence === '1h' || savedCadence === '6h') {
       setNotificationCadence(savedCadence);
     }
+
+    const savedCycle = localStorage.getItem('or_update_cycle');
+    if (savedCycle === 'annual' || savedCycle === 'quarterly' || savedCycle === 'halfyearly') {
+      setUpdateCycle(savedCycle);
+    }
+
+    const savedNotifications = localStorage.getItem('or_dept_notifications');
+    if (savedNotifications) {
+      try {
+        const parsed = JSON.parse(savedNotifications) as DeptNotification[];
+        if (Array.isArray(parsed)) setDeptNotifications(parsed);
+      } catch {
+        // ignore invalid cache
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('or_dept_notifications', JSON.stringify(deptNotifications));
+  }, [deptNotifications]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setDeptNotifications(prev => prev.map(item => {
+        if (item.status === 'sent') return item;
+        const due = new Date(item.scheduledAt).getTime() <= Date.now();
+        return due ? { ...item, status: 'sent' } : item;
+      }));
+    }, 15000);
+
+    return () => window.clearInterval(interval);
   }, []);
 
   function handleDeptChange(deptId: string) {
@@ -100,12 +147,55 @@ export default function HomePage() {
   function handleRoleChange(role: UserRole) {
     setUserRole(role);
     setLoginRole(role);
+    setView(role === 'manager' ? 'board' : 'myslots');
     localStorage.setItem('or_user_role', role);
   }
 
   function handleNotificationCadenceChange(value: NotificationCadence) {
     setNotificationCadence(value);
     localStorage.setItem('or_notification_cadence', value);
+  }
+
+  function handleUpdateCycleChange(value: UpdateCycle) {
+    setUpdateCycle(value);
+    localStorage.setItem('or_update_cycle', value);
+  }
+
+  function getNotificationDelay(cadence: NotificationCadence): number {
+    switch (cadence) {
+      case 'instant': return 0;
+      case '30m': return 30 * 60 * 1000;
+      case '1h': return 60 * 60 * 1000;
+      case '6h': return 6 * 60 * 60 * 1000;
+      default: return 0;
+    }
+  }
+
+  function queueDepartmentNotifications(params: {
+    ownerDeptName: string;
+    requestingDeptName: string;
+    date: string;
+    roomName: string;
+    startHour: number;
+    endHour: number;
+  }) {
+    const now = Date.now();
+    const delay = getNotificationDelay(notificationCadence);
+    const items: DeptNotification[] = schedule.departments.map(dept => {
+      const scheduledAt = new Date(now + delay).toISOString();
+      return {
+        id: `${dept.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        deptId: dept.id,
+        deptName: dept.name,
+        title: '枠移動が承認されました',
+        body: `${params.date} ${params.roomName} ${params.startHour}:00–${params.endHour}:00 の枠が、${params.ownerDeptName}から${params.requestingDeptName}に承認されました。`,
+        createdAt: new Date(now).toISOString(),
+        scheduledAt,
+        status: delay === 0 ? 'sent' : 'queued',
+      };
+    });
+
+    setDeptNotifications(prev => [...prev, ...items]);
   }
 
   function handleLogin() {
@@ -127,6 +217,7 @@ export default function HomePage() {
 
     setUserRole(loginRole);
     setActiveDeptId(nextDeptId);
+    setView(loginRole === 'manager' ? 'board' : 'myslots');
     localStorage.setItem('or_user_role', loginRole);
     if (nextDeptId) localStorage.setItem('or_active_dept', nextDeptId);
     setIsLoggedIn(true);
@@ -287,8 +378,29 @@ export default function HomePage() {
   const acquiredFromOtherDepts = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId && r.ownerDeptId !== activeDeptId).length;
   const myPendingRequests = schedule.slotRequests.filter(r => r.requestingDeptId === activeDeptId && r.status === 'pending').length;
   const isManager = userRole === 'manager';
+  const deptInbox = deptNotifications.filter(item => item.deptId === activeDeptId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
+  const managerNotificationsSummary = deptNotifications.filter(item => item.status === 'queued').length;
   const canViewDashboard = isManager;
   const canEditAbsence = isManager || userRole === 'dept';
+
+  const handleApproveRequest = useCallback((requestId: string) => {
+    const req = schedule.slotRequests.find(r => r.id === requestId);
+    if (!req) return;
+
+    const release = schedule.releasedSlots.find(r => r.id === req.releaseId);
+    const ownerDeptName = release?.ownerDeptName ?? '当該診療科';
+    const roomName = `手術室${req.roomId.replace('or', '')}`;
+
+    schedule.approveRequest(requestId);
+    queueDepartmentNotifications({
+      ownerDeptName,
+      requestingDeptName: req.requestingDeptName,
+      date: req.date,
+      roomName,
+      startHour: Number(req.wantedStartTime.split(':')[0]),
+      endHour: Number(req.wantedEndTime.split(':')[0]),
+    });
+  }, [schedule.approveRequest, schedule.releasedSlots, schedule.slotRequests, notificationCadence]);
 
   const workflowSteps = [
     {
@@ -353,19 +465,34 @@ export default function HomePage() {
           )}
 
           {userRole === 'manager' && (
-            <div className="flex items-center gap-2 ml-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
-              <span className="text-xs text-gray-500 whitespace-nowrap">全科通知:</span>
-              <select
-                className="text-sm font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                value={notificationCadence}
-                onChange={e => handleNotificationCadenceChange(e.target.value as NotificationCadence)}
-              >
-                <option value="instant">その都度</option>
-                <option value="30m">30分おき</option>
-                <option value="1h">1時間おき</option>
-                <option value="6h">6時間おき</option>
-              </select>
-            </div>
+            <>
+              <div className="flex items-center gap-2 ml-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                <span className="text-xs text-gray-500 whitespace-nowrap">全科通知:</span>
+                <select
+                  className="text-sm font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                  value={notificationCadence}
+                  onChange={e => handleNotificationCadenceChange(e.target.value as NotificationCadence)}
+                >
+                  <option value="instant">その都度</option>
+                  <option value="30m">30分おき</option>
+                  <option value="1h">1時間おき</option>
+                  <option value="6h">6時間おき</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 ml-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-1.5">
+                <span className="text-xs text-indigo-700 whitespace-nowrap">更新周期:</span>
+                <select
+                  className="text-sm font-bold text-indigo-800 bg-transparent focus:outline-none cursor-pointer"
+                  value={updateCycle}
+                  onChange={e => handleUpdateCycleChange(e.target.value as UpdateCycle)}
+                >
+                  <option value="annual">年次更新</option>
+                  <option value="quarterly">3か月更新</option>
+                  <option value="halfyearly">6か月更新</option>
+                </select>
+              </div>
+            </>
           )}
 
           <button
@@ -404,6 +531,12 @@ export default function HomePage() {
                 )}
               </button>
             )}
+            <button
+              onClick={() => setView('competition')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'competition' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              4. 競争状況
+            </button>
           </div>
 
           {/* Week nav (schedule view only) */}
@@ -452,6 +585,44 @@ export default function HomePage() {
           releasedSlots={schedule.releasedSlots}
         />
 
+        {userRole === 'dept' && deptInbox.length > 0 && (
+          <section className="mb-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700">通知一覧</p>
+                <h3 className="text-base font-bold text-gray-900 mt-0.5">{activeDept?.name ?? '診療科'} への通知</h3>
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-indigo-700 border border-indigo-200">{deptInbox.filter(n => n.status === 'sent').length}件送信済</span>
+            </div>
+            <div className="space-y-2">
+              {deptInbox.map(item => (
+                <div key={item.id} className="rounded-xl border border-indigo-200 bg-white px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-gray-800">{item.title}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {item.status === 'sent' ? '送信済' : '予約中'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">{item.body}</p>
+                  <p className="text-[10px] text-gray-400 mt-1">予定: {new Date(item.scheduledAt).toLocaleString('ja-JP')}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {userRole === 'manager' && managerNotificationsSummary > 0 && (
+          <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600">通知スケジュール</p>
+                <h3 className="text-base font-bold text-gray-900 mt-0.5">全診療科への通知待ち</h3>
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 border border-slate-200">{managerNotificationsSummary}件</span>
+            </div>
+          </section>
+        )}
+
         <section className="mb-5 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-indigo-50 p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
             <div>
@@ -486,34 +657,53 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">全員共有の競争状況</p>
-              <h3 className="text-base font-bold text-gray-900 mt-0.5">枠を獲得した診療科がすぐ見える</h3>
+        {!isManager && (
+          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">競争状況</p>
+                <h3 className="text-base font-bold text-gray-900 mt-0.5">全員共有の枠獲得状況を確認したいときは別画面へ</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setView('competition')}
+                className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
+              >
+                競争状況を見る
+              </button>
             </div>
-            <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-red-700 border border-red-200">全診療科に通知</span>
           </div>
-          <div className="mt-3 space-y-2">
-            {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
-              <p className="text-sm text-gray-600">まだ誰も枠を獲得していません。最初の引き受けが競争の始まりです。</p>
-            ) : (
-              schedule.releasedSlots
-                .filter(r => r.claimedByDeptId)
-                .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
-                .slice(0, 3)
-                .map(r => (
-                  <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-white px-3 py-2">
-                    <div>
-                      <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
-                      <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
+        )}
+
+        {view === 'competition' && (
+          <section className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">全員共有の競争状況</p>
+                <h3 className="text-base font-bold text-gray-900 mt-0.5">枠を獲得した診療科の詳細</h3>
+              </div>
+              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-red-700 border border-red-200">詳細閲覧</span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
+                <p className="text-sm text-gray-600">まだ誰も枠を獲得していません。最初の引き受けが競争の始まりです。</p>
+              ) : (
+                schedule.releasedSlots
+                  .filter(r => r.claimedByDeptId)
+                  .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
+                  .map(r => (
+                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-white px-3 py-2">
+                      <div>
+                        <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
+                        <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
+                      </div>
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得</span>
                     </div>
-                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得</span>
-                  </div>
-                ))
-            )}
-          </div>
-        </section>
+                  ))
+              )}
+            </div>
+          </section>
+        )}
 
         <section className="mb-5 grid gap-3 md:grid-cols-[1.4fr_1.1fr]">
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -573,6 +763,7 @@ export default function HomePage() {
         {view === 'myslots' && (
           <DeptSlotView
             activeDeptId={activeDeptId}
+            currentUserRole={userRole}
             departments={schedule.departments}
             allocations={schedule.allocations}
             surgeries={schedule.surgeries}
@@ -581,10 +772,39 @@ export default function HomePage() {
             onReleaseSlot={schedule.releaseSlot}
             onCancelRelease={schedule.cancelRelease}
             onSubmitRequest={schedule.submitRequest}
-            onApproveRequest={schedule.approveRequest}
+            onApproveRequest={handleApproveRequest}
             onRejectRequest={schedule.rejectRequest}
             onCancelRequest={schedule.cancelRequest}
           />
+        )}
+
+        {view === 'competition' && (
+          <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">競争状況詳細</p>
+                <h3 className="text-lg font-bold text-gray-900 mt-0.5">全診療科の枠獲得履歴</h3>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
+                <p className="text-sm text-gray-600">まだ引き受けられた枠はありません。</p>
+              ) : (
+                schedule.releasedSlots
+                  .filter(r => r.claimedByDeptId)
+                  .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
+                  .map(r => (
+                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
+                      <div>
+                        <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
+                        <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
+                      </div>
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得済</span>
+                    </div>
+                  ))
+              )}
+            </div>
+          </section>
         )}
 
         {userRole === 'dept' && !canViewDashboard && (
@@ -630,13 +850,16 @@ export default function HomePage() {
               releasedSlots={schedule.releasedSlots}
               absences={absences}
               departments={schedule.departments}
+              rooms={schedule.rooms}
               allocations={schedule.allocations}
               surgeries={schedule.surgeries}
               currentUserRole={userRole}
               currentDeptId={activeDeptId}
               notificationCadence={notificationCadence}
+              slotRequests={schedule.slotRequests}
               onClaim={schedule.claimSlot}
               onCancelRelease={schedule.cancelRelease}
+              onApproveRequest={handleApproveRequest}
             />
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">

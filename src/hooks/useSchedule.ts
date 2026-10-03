@@ -83,7 +83,7 @@ export function useSchedule() {
     reasonLabel?: string;
     source?: ReleasedSlot['source'];
   }) => {
-    const newRelease: ReleasedSlot = { id: generateId(), ...params, releasedAt: new Date().toISOString() };
+    const newRelease: ReleasedSlot = { id: generateId(), ...params, status: 'open', releasedAt: new Date().toISOString() };
     setReleasedSlots(prev => {
       const filtered = prev.filter(r => !(r.allocationId === params.allocationId && r.date === params.date));
       const next = [...filtered, newRelease];
@@ -152,14 +152,27 @@ export function useSchedule() {
     });
   }, []);
 
+  function buildTransferNotification(release: ReleasedSlot, nextDeptName: string) {
+    const roomLabel = `手術室${release.roomId.replace('or', '')}`;
+    const timeLabel = `${release.startHour}:00–${release.endHour}:00`;
+    return `${release.date} ${roomLabel} ${timeLabel} の枠が、${release.ownerDeptName}から${nextDeptName}に移りました。ご協力ありがとうございます。`;
+  }
+
   // 解放枠を直接引き受け（即時確定）
   const claimSlot = useCallback((releaseId: string, deptId: string, deptName: string) => {
     setReleasedSlots(prev => {
-      const next = prev.map(r =>
-        r.id === releaseId
-          ? { ...r, claimedByDeptId: deptId, claimedByDeptName: deptName, claimedAt: new Date().toISOString() }
-          : r
-      );
+      const next: ReleasedSlot[] = prev.map(r => {
+        if (r.id !== releaseId) return r;
+        const updated: ReleasedSlot = {
+          ...r,
+          status: 'done',
+          claimedByDeptId: deptId,
+          claimedByDeptName: deptName,
+          claimedAt: new Date().toISOString(),
+          message: r.message || buildTransferNotification(r, deptName),
+        };
+        return updated;
+      });
       storage.saveReleasedSlots(next);
       return next;
     });

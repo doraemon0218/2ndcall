@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { format, addDays, startOfWeek, parseISO, isWithinInterval } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { ReleasedSlot, Department, SlotAllocation, Surgery } from '@/lib/types';
+import { ReleasedSlot, Department, SlotAllocation, Surgery, OperatingRoom } from '@/lib/types';
 import { getDeptBgStyle } from '@/lib/utils';
 import { Absence } from './AbsenceModal';
 
@@ -11,32 +11,52 @@ interface Props {
   releasedSlots: ReleasedSlot[];
   absences: Absence[];
   departments: Department[];
+  rooms: OperatingRoom[];
   allocations: SlotAllocation[];
   surgeries: Surgery[];
   currentUserRole?: 'manager' | 'dept';
   currentDeptId?: string;
   notificationCadence?: 'instant' | '30m' | '1h' | '6h';
+  slotRequests?: Array<{
+    id: string;
+    releaseId: string;
+    date: string;
+    roomId: string;
+    requestingDeptId: string;
+    requestingDeptName: string;
+    procedure: string;
+    surgeonName: string;
+    wantedStartTime: string;
+    wantedEndTime: string;
+    notes: string;
+    status: 'pending' | 'approved' | 'rejected';
+  }>;
   onClaim: (releaseId: string, deptId: string, deptName: string) => void;
   onCancelRelease: (releaseId: string) => void;
+  onApproveRequest?: (requestId: string) => void;
 }
 
 export default function OpenSlotBoard({
-  releasedSlots, absences, departments, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', notificationCadence = 'instant', onClaim, onCancelRelease
+  releasedSlots, absences, departments, rooms, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', notificationCadence = 'instant', slotRequests = [], onClaim, onCancelRelease, onApproveRequest
 }: Props) {
+  const today = new Date();
   const [tab, setTab] = useState<'advance' | 'urgent'>('urgent');
   const [claimDept, setClaimDept] = useState<Record<string, string>>({});
-
-  const today = new Date();
+  const [selectedDeptId, setSelectedDeptId] = useState<string>('all');
+  const [selectedDate, setSelectedDate] = useState<string>(format(today, 'yyyy-MM-dd'));
   const nextWeekMonday = startOfWeek(addDays(today, 7), { weekStartsOn: 1 });
+  const isSettled = (r: ReleasedSlot) => r.status === 'done' || (!!r.claimedByDeptId && !!r.claimedAt);
+  const activeReleased = releasedSlots.filter(r => !isSettled(r));
+  const settledReleased = releasedSlots.filter(isSettled).sort((a, b) => (b.claimedAt ?? b.releasedAt).localeCompare(a.claimedAt ?? a.releasedAt));
 
   // 事前告知: 学会などで先に分かっている空き枠 (1週間超先)
-  const advanceReleased = releasedSlots.filter(r => {
+  const advanceReleased = activeReleased.filter(r => {
     const d = parseISO(r.date);
     return d >= addDays(today, 8);
   });
 
   // 今週〜来週の空き枠（緊急共有）
-  const urgentReleased = releasedSlots.filter(r => {
+  const urgentReleased = activeReleased.filter(r => {
     const d = parseISO(r.date);
     return d <= addDays(today, 7);
   });
@@ -76,11 +96,19 @@ export default function OpenSlotBoard({
     setClaimDept(prev => ({ ...prev, [releaseId]: '' }));
   }
 
-  const urgentCount = urgentReleased.filter(r => !r.claimedByDeptId).length;
-  const advanceCount = advanceReleased.length + absenceAffected.length;
-  const positiveOpen = releasedSlots.filter(r => r.reasonType === 'positive').length;
-  const negativeOpen = releasedSlots.filter(r => r.reasonType === 'negative').length;
-  const claimWindowSlots = releasedSlots.filter(r => {
+  const visibleActiveReleased = selectedDeptId === 'all'
+    ? activeReleased
+    : activeReleased.filter(r => r.ownerDeptId === selectedDeptId || r.claimedByDeptId === selectedDeptId);
+
+  const visibleSettleReleased = selectedDeptId === 'all'
+    ? settledReleased
+    : settledReleased.filter(r => r.ownerDeptId === selectedDeptId || r.claimedByDeptId === selectedDeptId);
+
+  const urgentCount = visibleActiveReleased.filter(r => !r.claimedByDeptId).length;
+  const advanceCount = visibleActiveReleased.length + absenceAffected.length;
+  const positiveOpen = visibleActiveReleased.filter(r => r.reasonType === 'positive').length;
+  const negativeOpen = visibleActiveReleased.filter(r => r.reasonType === 'negative').length;
+  const claimWindowSlots = visibleActiveReleased.filter(r => {
     if (r.claimedByDeptId) return false;
 
     const slotDate = parseISO(r.date);
@@ -94,15 +122,45 @@ export default function OpenSlotBoard({
     const matchesClaimWindow = slotDate >= currentThu && slotDate <= currentFri;
     return matchesReleaseWorkflow && matchesClaimWindow;
   });
-  const claimFeed = releasedSlots
-    .filter(r => r.claimedByDeptId)
-    .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
-    .slice(0, 5);
+  const claimFeed = visibleSettleReleased.slice(0, 5);
   const cadenceLabel =
     notificationCadence === 'instant' ? 'その都度' :
     notificationCadence === '30m' ? '30分おき' :
     notificationCadence === '1h' ? '1時間おき' :
     '6時間おき';
+
+  const pendingRequests = slotRequests.filter(req => req.status === 'pending');
+
+  const dayLabel = format(new Date(selectedDate), 'yyyy年M月d日（E）', { locale: ja });
+  const selectedDow = new Date(selectedDate).getDay() === 0 ? 7 : new Date(selectedDate).getDay();
+  const dayAllocations = allocations.filter(a => a.dayOfWeek === selectedDow);
+
+  const dailyAvailability = rooms.map(room => {
+    const roomAllocations = dayAllocations.filter(a => a.roomId === room.id);
+    const roomBands = roomAllocations.map(alloc => {
+      const ownerDept = departments.find(d => d.id === alloc.deptId);
+      const openForThisDate = !surgeries.some(s => {
+        if (s.date !== selectedDate || s.roomId !== room.id || s.status === 'cancelled') return false;
+        const [sh, sm] = s.startTime.split(':').map(Number);
+        const [eh, em] = s.endTime.split(':').map(Number);
+        const startMinutes = sh * 60 + sm;
+        const endMinutes = eh * 60 + em;
+        const allocStart = alloc.startHour * 60 + alloc.startMin;
+        const allocEnd = alloc.endHour * 60 + alloc.endMin;
+        return startMinutes < allocEnd && endMinutes > allocStart;
+      });
+      return {
+        alloc,
+        ownerDept,
+        isOpen: openForThisDate,
+      };
+    }).filter(b => b.isOpen);
+
+    return {
+      room,
+      roomBands,
+    };
+  });
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -112,6 +170,33 @@ export default function OpenSlotBoard({
           {urgentCount > 0 && <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">{urgentCount}件</span>}
         </h3>
         <p className="text-xs text-gray-500 mt-0.5">解放中の枠と事前告知された不在情報</p>
+      </div>
+
+      <div className="px-4 py-3 border-b border-gray-100 bg-slate-50">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600">診療科</label>
+            <select
+              value={selectedDeptId}
+              onChange={e => setSelectedDeptId(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg bg-white px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">全診療科</option>
+              {departments.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600">日付</label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg bg-white px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
       </div>
 
       <div className="border-b border-gray-100 bg-red-50/60 px-4 py-3">
@@ -141,6 +226,14 @@ export default function OpenSlotBoard({
           </p>
         </div>
 
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 mb-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-700">済みリスト</span>
+            <span className="text-[10px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded-full">{settledReleased.length}件</span>
+          </div>
+          <p className="text-xs text-gray-600 mt-1">一度通知した内容は重複せず、分析用の履歴として残します。</p>
+        </div>
+
         <div className="grid gap-2 sm:grid-cols-2 mb-3">
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5">
             <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">ポジティブ理由</div>
@@ -153,15 +246,50 @@ export default function OpenSlotBoard({
             <div className="text-[10px] text-amber-700/80">休暇・患者不足・手術なし</div>
           </div>
         </div>
+        <div className="rounded-xl border border-blue-200 bg-white px-3 py-2 mb-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-blue-700">日別空き枠</p>
+            <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">{dayLabel}</span>
+          </div>
+          <div className="mt-2 space-y-2">
+            {dailyAvailability.map(({ room, roomBands }) => (
+              <div key={room.id} className="grid grid-cols-[52px_1fr] items-center gap-2">
+                <div className="text-[11px] font-bold text-gray-700">手術室{room.name.replace('手術室', '')}</div>
+                <div className="relative h-8 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
+                  {roomBands.length === 0 ? (
+                    <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-400">予定あり</div>
+                  ) : (
+                    roomBands.map(({ alloc, ownerDept }) => {
+                      const start = Math.max(8, alloc.startHour);
+                      const end = Math.min(17, alloc.endHour + (alloc.endMin > 0 ? 0.5 : 0));
+                      const left = ((start - 8) / 9) * 100;
+                      const width = ((end - start) / 9) * 100;
+                      return (
+                        <div
+                          key={alloc.id}
+                          className="absolute top-1 bottom-1 rounded-md border border-white/80 shadow-sm flex items-center justify-center text-[9px] font-bold text-white truncate px-1"
+                          style={{ left: `${left}%`, width: `${Math.max(width, 12)}%`, backgroundColor: ownerDept ? getDeptBgStyle(ownerDept.color) : '#64748b' }}
+                          title={`${ownerDept?.name ?? '診療科'}: ${alloc.startHour}:00–${alloc.endHour}:00`}
+                        >
+                          {ownerDept?.shortName ?? '空き'}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
         {claimFeed.length === 0 ? (
-          <p className="text-xs text-gray-500">まだ枠の獲得はありません。競争はこれからです。</p>
+          <p className="text-xs text-gray-500">まだ完了した枠移動はありません。</p>
         ) : (
           <div className="space-y-2">
             {claimFeed.map(r => (
-              <div key={r.id} className="rounded-xl border border-red-200 bg-white px-3 py-2">
+              <div key={r.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-gray-800">{r.ownerDeptName}</span>
-                  <span className="text-[10px] text-red-600 font-bold">→ {r.claimedByDeptName}</span>
+                  <span className="text-[10px] text-slate-600 font-bold">→ {r.claimedByDeptName}</span>
                 </div>
                 <p className="text-[11px] text-gray-600 mt-0.5">
                   {r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00
@@ -196,6 +324,46 @@ export default function OpenSlotBoard({
           {advanceCount > 0 && <span className="w-4 h-4 flex items-center justify-center bg-blue-500 text-white text-xs rounded-full">{Math.min(advanceCount, 9)}</span>}
         </button>
       </div>
+
+      {currentUserRole === 'manager' && pendingRequests.length > 0 && (
+        <div className="border-b border-gray-100 bg-amber-50/60 p-4">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">承認待ち</p>
+              <h4 className="text-sm font-bold text-gray-900 mt-0.5">他診療科からの申請</h4>
+            </div>
+            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">{pendingRequests.length}件</span>
+          </div>
+          <div className="space-y-2">
+            {pendingRequests.map(req => {
+              const release = releasedSlots.find(r => r.id === req.releaseId);
+              const ownerDept = departments.find(d => d.id === release?.ownerDeptId);
+              return (
+                <div key={req.id} className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <p className="text-xs font-bold text-gray-800">{req.requestingDeptName} が申請</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5">{req.date} · 手術室{req.roomId.replace('or', '')} · {req.wantedStartTime}–{req.wantedEndTime}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onApproveRequest?.(req.id)}
+                      className="px-2.5 py-1 text-[10px] font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
+                    >
+                      承認
+                    </button>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
+                    <span>{req.procedure || '術式未記載'}</span>
+                    {req.surgeonName && <span>· {req.surgeonName}</span>}
+                    {ownerDept && <span>· 所有: {ownerDept.name}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="p-4 space-y-3 max-h-96 overflow-y-auto">
         {tab === 'urgent' && (

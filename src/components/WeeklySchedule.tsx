@@ -51,6 +51,16 @@ export default function WeeklySchedule({
   }
 
   const dayLabels = weekDates.map(d => formatDate(d));
+  const canManageDeptRelease = (slot: WeeklySlot) => {
+    if (currentUserRole === 'manager') return true;
+    if (currentUserRole !== 'dept') return false;
+    return !!currentDeptId && currentDeptId === slot.allocation.deptId;
+  };
+  const canEditSurgeryForSlot = (slot: WeeklySlot) => {
+    if (currentUserRole === 'manager') return true;
+    if (currentUserRole !== 'dept') return false;
+    return !!currentDeptId && currentDeptId === slot.allocation.deptId;
+  };
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -134,7 +144,7 @@ export default function WeeklySchedule({
                     )}
 
                     {/* Deadline alert */}
-                    {slot.isEmpty && slot.isDeadlinePassed && !isReleased && (
+{slot.isEmpty && slot.isDeadlinePassed && !isReleased && canManageDeptRelease(slot) && (
                       <button
                         onClick={() => setReleaseModal({ slot })}
                         className="mb-1.5 w-full px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold flex items-center gap-1 hover:bg-red-200 transition-colors"
@@ -151,8 +161,10 @@ export default function WeeklySchedule({
                         return (
                           <button
                             key={s.id}
-                            onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s })}
-                            className="w-full text-left px-2 py-1.5 rounded border border-gray-200 bg-white text-xs hover:shadow-sm transition-all group"
+                            onClick={() => {
+                              if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
+                            }}
+                            className={`w-full text-left px-2 py-1.5 rounded border border-gray-200 bg-white text-xs hover:shadow-sm transition-all group ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
                             style={{ borderLeftWidth: '3px', borderLeftColor: sColor }}
                           >
                             <div className="flex items-start gap-1">
@@ -178,8 +190,10 @@ export default function WeeklySchedule({
                       {slot.surgeries.filter(s => s.status === 'cancelled').map(s => (
                         <button
                           key={s.id}
-                          onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s })}
-                          className="w-full text-left px-2 py-1 rounded border border-gray-200 text-xs text-gray-400 line-through bg-white"
+                          onClick={() => {
+                            if (canEditSurgeryForSlot(slot)) setSurgeryModal({ allocation: slot.allocation, date: slot.date, surgery: s });
+                          }}
+                          className={`w-full text-left px-2 py-1 rounded border border-gray-200 text-xs text-gray-400 line-through bg-white ${canEditSurgeryForSlot(slot) ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
                         >
                           {s.procedure}
                         </button>
@@ -188,13 +202,15 @@ export default function WeeklySchedule({
 
                     {/* Actions */}
                     <div className="mt-1.5 flex gap-1">
-                      <button
-                        onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date })}
-                        className="flex-1 py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-gray-300 hover:border-blue-400 transition-colors"
-                      >
-                        ＋ 手術追加
-                      </button>
-                      {slot.isEmpty && !isReleased && (
+                      {canEditSurgeryForSlot(slot) && (
+                        <button
+                          onClick={() => setSurgeryModal({ allocation: slot.allocation, date: slot.date })}
+                          className="flex-1 py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-gray-300 hover:border-blue-400 transition-colors"
+                        >
+                          ＋ 手術追加
+                        </button>
+                      )}
+                      {slot.isEmpty && !isReleased && canManageDeptRelease(slot) && (
                         <button
                           onClick={() => setReleaseModal({ slot })}
                           className="px-2 py-1 text-xs text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded border border-dashed border-gray-300 hover:border-purple-400 transition-colors"
@@ -234,6 +250,8 @@ export default function WeeklySchedule({
           date={surgeryModal.date}
           surgery={surgeryModal.surgery}
           departments={departments}
+          currentUserRole={currentUserRole}
+          currentDeptId={currentDeptId}
           onSave={onAddSurgery}
           onDelete={onDeleteSurgery}
           onClose={() => setSurgeryModal(null)}

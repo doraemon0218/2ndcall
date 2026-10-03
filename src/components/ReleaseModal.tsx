@@ -25,6 +25,12 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
 
   function handleRelease(e: React.FormEvent) {
     e.preventDefault();
+    if (currentUserRole === 'dept') {
+      if (!currentDeptId || allocation.deptId !== currentDeptId) {
+        onClose();
+        return;
+      }
+    }
     const finalMessage = messagePreset === 'other' ? message : messagePreset;
     onRelease({ releasedBy, message: finalMessage || message });
     onClose();
