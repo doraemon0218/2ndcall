@@ -104,6 +104,16 @@ export default function DeptSlotView({
 
   return (
     <div className="space-y-5">
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">入力の進め方</p>
+            <p className="text-sm font-bold text-gray-800 mt-0.5">まずは自科の枠状況を確認して、次に共有または申請を行います</p>
+          </div>
+          <span className="text-xs text-amber-800 bg-white/80 border border-amber-200 rounded-full px-2 py-0.5">1. 確認 2. 共有 3. 申請</span>
+        </div>
+      </div>
+
       {/* ── 自科の保有枠 ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">

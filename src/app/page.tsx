@@ -15,6 +15,7 @@ import DeptSlotView from '@/components/DeptSlotView';
 import { generateId } from '@/lib/utils';
 
 type View = 'schedule' | 'myslots' | 'board';
+type UserRole = 'manager' | 'dept';
 
 export default function HomePage() {
   const schedule = useSchedule();
@@ -25,7 +26,8 @@ export default function HomePage() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showMasterModal, setShowMasterModal] = useState(false);
 
-  // ログイン中の診療科（デモ用選択）
+  // ログイン中の立場（デモ用）
+  const [userRole, setUserRole] = useState<UserRole>('dept');
   const [activeDeptId, setActiveDeptId] = useState('');
 
   useEffect(() => {
@@ -41,10 +43,59 @@ export default function HomePage() {
     }
   }, [schedule.departments, activeDeptId]);
 
+  useEffect(() => {
+    const savedRole = localStorage.getItem('or_user_role');
+    if (savedRole === 'manager' || savedRole === 'dept') setUserRole(savedRole);
+  }, []);
+
   function handleDeptChange(deptId: string) {
     setActiveDeptId(deptId);
     localStorage.setItem('or_active_dept', deptId);
   }
+
+  function handleRoleChange(role: UserRole) {
+    setUserRole(role);
+    localStorage.setItem('or_user_role', role);
+  }
+
+  const applyAutoReleaseForAbsence = useCallback((absence: Omit<Absence, 'id' | 'createdAt'>) => {
+    const start = new Date(`${absence.startDate}T00:00:00`);
+    const end = new Date(`${absence.endDate}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+
+    const reasonType = absence.reasonType ?? 'neutral';
+    const current = new Date(start);
+    while (current <= end) {
+      const dateStr = format(current, 'yyyy-MM-dd');
+      const dayOfWeek = current.getDay() === 0 ? 7 : current.getDay();
+
+      schedule.allocations
+        .filter(a => a.deptId === absence.deptId && a.dayOfWeek === dayOfWeek)
+        .forEach(alloc => {
+          const hasSurgery = schedule.surgeries.some(s => s.date === dateStr && s.roomId === alloc.roomId && s.status !== 'cancelled');
+          const hasImportRelease = schedule.releasedSlots.some(r => r.allocationId === alloc.id && r.date === dateStr);
+          if (!hasSurgery && !hasImportRelease) {
+            schedule.releaseSlot({
+              allocationId: alloc.id,
+              date: dateStr,
+              roomId: alloc.roomId,
+              ownerDeptId: alloc.deptId,
+              ownerDeptName: alloc.deptName,
+              period: alloc.period,
+              startHour: alloc.startHour,
+              endHour: alloc.endHour,
+              releasedBy: absence.personName || absence.deptName,
+              message: `${absence.reason}のため自動共有（${absence.deptName}）`,
+              reasonType,
+              reasonLabel: absence.reason,
+              source: 'absence',
+            });
+          }
+        });
+
+      current.setDate(current.getDate() + 1);
+    }
+  }, [schedule.allocations, schedule.releaseSlot, schedule.releasedSlots, schedule.surgeries]);
 
   const saveAbsence = useCallback((absence: Omit<Absence, 'id' | 'createdAt'>) => {
     const newAbsence: Absence = { ...absence, id: generateId(), createdAt: new Date().toISOString() };
@@ -53,7 +104,8 @@ export default function HomePage() {
       localStorage.setItem('or_absences', JSON.stringify(next));
       return next;
     });
-  }, []);
+    applyAutoReleaseForAbsence(absence);
+  }, [applyAutoReleaseForAbsence]);
 
   const importAbsences = useCallback((items: Omit<Absence, 'id' | 'createdAt'>[]) => {
     const newItems: Absence[] = items.map(a => ({ ...a, id: generateId(), createdAt: new Date().toISOString() }));
@@ -62,7 +114,8 @@ export default function HomePage() {
       localStorage.setItem('or_absences', JSON.stringify(next));
       return next;
     });
-  }, []);
+    items.forEach(item => applyAutoReleaseForAbsence(item));
+  }, [applyAutoReleaseForAbsence]);
 
   const deleteAbsence = useCallback((id: string) => {
     setAbsences(prev => {
@@ -82,6 +135,37 @@ export default function HomePage() {
 
   const openSlotCount = schedule.releasedSlots.filter(r => !r.claimedByDeptId).length;
   const activeDept = schedule.departments.find(d => d.id === activeDeptId);
+  const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
+  const releasedByMe = schedule.releasedSlots.filter(r => r.ownerDeptId === activeDeptId).length;
+  const claimedByMe = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId).length;
+  const myPendingRequests = schedule.slotRequests.filter(r => r.requestingDeptId === activeDeptId && r.status === 'pending').length;
+  const isManager = userRole === 'manager';
+  const canViewDashboard = isManager;
+  const canEditAbsence = isManager || userRole === 'dept';
+
+  const workflowSteps = [
+    {
+      id: 'myslots' as const,
+      label: 'Step 1',
+      title: '自科の枠を確認',
+      description: '保有枠の状態と共有予定を確認して、空きが出る枠を登録します。',
+      action: '自科の枠を開く',
+    },
+    {
+      id: 'schedule' as const,
+      label: 'Step 2',
+      title: '週次グリッドで手術を入力',
+      description: '各日・各室の予定を見ながら、手術や不在を追加して確定させます。',
+      action: '週次グリッドへ',
+    },
+    {
+      id: 'board' as const,
+      label: 'Step 3',
+      title: '空き枠を引き受ける',
+      description: '他科の解放枠を見て、必要なときに自科で引き受けます。',
+      action: '空き枠ボードへ',
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -99,19 +183,40 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Dept selector (= "ログイン中の診療科") */}
+          {/* Role selector */}
           <div className="flex items-center gap-2 ml-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
-            <span className="text-xs text-gray-500 whitespace-nowrap">診療科:</span>
+            <span className="text-xs text-gray-500 whitespace-nowrap">立場:</span>
             <select
               className="text-sm font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
-              value={activeDeptId}
-              onChange={e => handleDeptChange(e.target.value)}
+              value={userRole}
+              onChange={e => handleRoleChange(e.target.value as UserRole)}
             >
-              {schedule.departments.map(d => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
+              <option value="dept">診療科部長</option>
+              <option value="manager">手術室管理者</option>
             </select>
           </div>
+
+          {/* Dept selector (= "ログイン中の診療科") */}
+          {userRole === 'dept' && (
+            <div className="flex items-center gap-2 ml-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
+              <span className="text-xs text-gray-500 whitespace-nowrap">診療科:</span>
+              <select
+                className="text-sm font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
+                value={activeDeptId}
+                onChange={e => handleDeptChange(e.target.value)}
+              >
+                {schedule.departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {userRole === 'manager' && (
+            <div className="flex items-center gap-2 ml-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-1.5">
+              <span className="text-xs font-bold text-blue-700 whitespace-nowrap">手術室管理者</span>
+            </div>
+          )}
 
           {/* View tabs */}
           <div className="flex bg-gray-100 rounded-lg p-1 gap-1 ml-2">
@@ -119,23 +224,25 @@ export default function HomePage() {
               onClick={() => setView('myslots')}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'myslots' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              自科の枠
+              1. 自科の枠
             </button>
             <button
               onClick={() => setView('schedule')}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${view === 'schedule' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              週次グリッド
+              2. 週次グリッド
             </button>
-            <button
-              onClick={() => setView('board')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1 ${view === 'board' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              空き枠ボード
-              {openSlotCount > 0 && (
-                <span className="w-4 h-4 flex items-center justify-center bg-red-500 text-white text-xs rounded-full">{openSlotCount}</span>
-              )}
-            </button>
+            {canViewDashboard && (
+              <button
+                onClick={() => setView('board')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1 ${view === 'board' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                3. 空き枠ボード
+                {openSlotCount > 0 && (
+                  <span className="w-4 h-4 flex items-center justify-center bg-red-500 text-white text-xs rounded-full">{openSlotCount}</span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Week nav (schedule view only) */}
@@ -162,12 +269,14 @@ export default function HomePage() {
             >
               📊 一括インポート
             </button>
-            <button
-              onClick={() => setShowAbsenceModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
-            >
-              📅 不在登録
-            </button>
+            {canEditAbsence && (
+              <button
+                onClick={() => setShowAbsenceModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+              >
+                📅 不在登録
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -181,6 +290,119 @@ export default function HomePage() {
           surgeries={schedule.surgeries}
           releasedSlots={schedule.releasedSlots}
         />
+
+        <section className="mb-5 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-indigo-50 p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.12em] text-blue-600">入力の流れ</p>
+              <h2 className="text-lg font-bold text-gray-900 mt-0.5">{isManager ? '全診療科での基本操作' : `${activeDept?.name ?? '診療科'}での基本操作`}</h2>
+            </div>
+            <span className="text-xs text-gray-500 bg-white/80 border border-gray-200 rounded-full px-2.5 py-1">{isManager ? '全体の状況を見ながら運用します' : '最初にこの順番で進めると迷いにくいです'}</span>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            {workflowSteps.map((step) => {
+              const active = view === step.id;
+              return (
+                <button
+                  key={step.id}
+                  onClick={() => setView(step.id)}
+                  className={`text-left rounded-xl border p-3.5 transition-all ${
+                    active
+                      ? 'border-blue-300 bg-white shadow-sm ring-2 ring-blue-100'
+                      : 'border-gray-200 bg-white/70 hover:border-blue-200 hover:bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold tracking-[0.12em] text-blue-700">{step.label}</span>
+                    <span className="text-[10px] text-gray-400">{step.action}</span>
+                  </div>
+                  <h3 className="mt-2 text-sm font-bold text-gray-800">{step.title}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-600">{step.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">全員共有の競争状況</p>
+              <h3 className="text-base font-bold text-gray-900 mt-0.5">枠を獲得した診療科がすぐ見える</h3>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-red-700 border border-red-200">全診療科に通知</span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {schedule.releasedSlots.filter(r => r.claimedByDeptId).length === 0 ? (
+              <p className="text-sm text-gray-600">まだ誰も枠を獲得していません。最初の引き受けが競争の始まりです。</p>
+            ) : (
+              schedule.releasedSlots
+                .filter(r => r.claimedByDeptId)
+                .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
+                .slice(0, 3)
+                .map(r => (
+                  <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-white px-3 py-2">
+                    <div>
+                      <div className="text-sm font-bold text-gray-800">{r.ownerDeptName} → {r.claimedByDeptName}</div>
+                      <div className="text-[11px] text-gray-500">{r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00</div>
+                    </div>
+                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">獲得</span>
+                  </div>
+                ))
+            )}
+          </div>
+        </section>
+
+        <section className="mb-5 grid gap-3 md:grid-cols-[1.4fr_1.1fr]">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">自分の立場</p>
+                <h3 className="text-base font-bold text-gray-900">{activeDept?.name ?? '診療科'} の現況</h3>
+              </div>
+              <span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-700">当事者</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                <div className="text-[10px] text-blue-600 font-bold uppercase tracking-[0.08em]">保有枠</div>
+                <div className="mt-1 text-xl font-bold text-blue-700">{ownedByMe}</div>
+              </div>
+              <div className="rounded-xl border border-purple-100 bg-purple-50 p-3">
+                <div className="text-[10px] text-purple-600 font-bold uppercase tracking-[0.08em]">共有中</div>
+                <div className="mt-1 text-xl font-bold text-purple-700">{releasedByMe}</div>
+              </div>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-[0.08em]">引受済</div>
+                <div className="mt-1 text-xl font-bold text-emerald-700">{claimedByMe}</div>
+              </div>
+              <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+                <div className="text-[10px] text-amber-600 font-bold uppercase tracking-[0.08em]">申請中</div>
+                <div className="mt-1 text-xl font-bold text-amber-700">{myPendingRequests}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">編集権限</p>
+            <div className="mt-3 space-y-3">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-blue-800">当事者</span>
+                  <span className="text-[10px] text-blue-700 bg-white px-2 py-0.5 rounded-full">自科のみ</span>
+                </div>
+                <p className="mt-1 text-xs text-blue-700">自科の保有枠を共有・取消・申請の判定まで操作できます。</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-700">他科</span>
+                  <span className="text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded-full">閲覧 + 申請</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600">共有中の枠は申請・引き受けだけ可能で、当事者にのみ決定権があります。</p>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* ── 自科の枠ビュー ── */}
         {view === 'myslots' && (
@@ -198,6 +420,12 @@ export default function HomePage() {
             onRejectRequest={schedule.rejectRequest}
             onCancelRequest={schedule.cancelRequest}
           />
+        )}
+
+        {userRole === 'dept' && !canViewDashboard && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            部長権限では全体ダッシュボードは表示されません。自科の枠と週次グリッドのみを確認できます。
+          </div>
         )}
 
         {/* ── 週次グリッド ── */}
@@ -229,7 +457,7 @@ export default function HomePage() {
         )}
 
         {/* ── 空き枠ボード ── */}
-        {view === 'board' && (
+        {view === 'board' && canViewDashboard && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <OpenSlotBoard
               releasedSlots={schedule.releasedSlots}
@@ -285,6 +513,8 @@ export default function HomePage() {
       {showAbsenceModal && (
         <AbsenceModal
           departments={schedule.departments}
+          defaultDeptId={userRole === 'manager' ? (schedule.departments[0]?.id ?? activeDeptId) : activeDeptId}
+          managerMode={userRole === 'manager'}
           onSave={saveAbsence}
           onClose={() => setShowAbsenceModal(false)}
         />

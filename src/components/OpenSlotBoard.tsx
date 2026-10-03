@@ -75,6 +75,12 @@ export default function OpenSlotBoard({
 
   const urgentCount = urgentReleased.filter(r => !r.claimedByDeptId).length;
   const advanceCount = advanceReleased.length + absenceAffected.length;
+  const positiveOpen = releasedSlots.filter(r => r.reasonType === 'positive').length;
+  const negativeOpen = releasedSlots.filter(r => r.reasonType === 'negative').length;
+  const claimFeed = releasedSlots
+    .filter(r => r.claimedByDeptId)
+    .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
+    .slice(0, 5);
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -84,6 +90,49 @@ export default function OpenSlotBoard({
           {urgentCount > 0 && <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">{urgentCount}件</span>}
         </h3>
         <p className="text-xs text-gray-500 mt-0.5">解放中の枠と事前告知された不在情報</p>
+      </div>
+
+      <div className="border-b border-gray-100 bg-red-50/60 px-4 py-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">枠獲得通知</p>
+          <span className="text-[10px] text-red-600 bg-white px-2 py-0.5 rounded-full">全診療科共有</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 mb-3">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5">
+            <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">ポジティブ理由</div>
+            <div className="mt-1 text-lg font-bold text-emerald-700">{positiveOpen}</div>
+            <div className="text-[10px] text-emerald-700/80">学会・研修・出張</div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5">
+            <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-amber-700">ネガティブ理由</div>
+            <div className="mt-1 text-lg font-bold text-amber-700">{negativeOpen}</div>
+            <div className="text-[10px] text-amber-700/80">休暇・患者不足・手術なし</div>
+          </div>
+        </div>
+        {claimFeed.length === 0 ? (
+          <p className="text-xs text-gray-500">まだ枠の獲得はありません。競争はこれからです。</p>
+        ) : (
+          <div className="space-y-2">
+            {claimFeed.map(r => (
+              <div key={r.id} className="rounded-xl border border-red-200 bg-white px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-gray-800">{r.ownerDeptName}</span>
+                  <span className="text-[10px] text-red-600 font-bold">→ {r.claimedByDeptName}</span>
+                </div>
+                <p className="text-[11px] text-gray-600 mt-0.5">
+                  {r.date} · 手術室{r.roomId.replace('or', '')} · {r.startHour}:00–{r.endHour}:00
+                </p>
+                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${r.reasonType === 'positive' ? 'bg-emerald-100 text-emerald-700' : r.reasonType === 'negative' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
+                    {r.reasonType === 'positive' ? 'ポジティブ' : r.reasonType === 'negative' ? 'ネガティブ' : 'その他'}
+                  </span>
+                  {r.reasonLabel && <span className="text-[10px] text-gray-500">{r.reasonLabel}</span>}
+                </div>
+                {r.message && <p className="text-[11px] text-gray-500 mt-0.5">{r.message}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}

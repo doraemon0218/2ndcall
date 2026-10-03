@@ -79,6 +79,9 @@ export function useSchedule() {
     startHour: number; endHour: number;
     availStartTime?: string; availEndTime?: string;
     releasedBy: string; message: string;
+    reasonType?: ReleasedSlot['reasonType'];
+    reasonLabel?: string;
+    source?: ReleasedSlot['source'];
   }) => {
     const newRelease: ReleasedSlot = { id: generateId(), ...params, releasedAt: new Date().toISOString() };
     setReleasedSlots(prev => {

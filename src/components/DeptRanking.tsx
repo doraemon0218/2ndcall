@@ -58,8 +58,8 @@ export default function DeptRanking({ weekStart, allocations, surgeries, release
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100">
-        <h3 className="font-bold text-gray-900">診療科別 稼働実績</h3>
-        <p className="text-xs text-gray-500 mt-0.5">保有枠の稼働率 + 他科枠引き受け実績</p>
+        <h3 className="font-bold text-gray-900">枠の支配状況ダッシュボード</h3>
+        <p className="text-xs text-gray-500 mt-0.5">保有枠の稼働率と、他科から引き受けた／解放した枠の実績を見えやすく整理しています</p>
       </div>
       <div className="divide-y divide-gray-50">
         {stats.map((s, i) => {
