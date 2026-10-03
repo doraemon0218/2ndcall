@@ -16,6 +16,7 @@ import { generateId } from '@/lib/utils';
 
 type View = 'schedule' | 'myslots' | 'board';
 type UserRole = 'manager' | 'dept';
+type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 
 export default function HomePage() {
   const schedule = useSchedule();
@@ -33,6 +34,7 @@ export default function HomePage() {
   const [loginRole, setLoginRole] = useState<UserRole>('dept');
   const [loginDeptId, setLoginDeptId] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
 
   useEffect(() => {
     const raw = localStorage.getItem('or_absences');
@@ -57,6 +59,13 @@ export default function HomePage() {
     if (savedRole === 'manager' || savedRole === 'dept') {
       setUserRole(savedRole);
       setLoginRole(savedRole);
+    }
+  }, []);
+
+  useEffect(() => {
+    const savedCadence = localStorage.getItem('or_notification_cadence');
+    if (savedCadence === 'instant' || savedCadence === '30m' || savedCadence === '1h' || savedCadence === '6h') {
+      setNotificationCadence(savedCadence);
     }
   }, []);
 
@@ -92,6 +101,11 @@ export default function HomePage() {
     setUserRole(role);
     setLoginRole(role);
     localStorage.setItem('or_user_role', role);
+  }
+
+  function handleNotificationCadenceChange(value: NotificationCadence) {
+    setNotificationCadence(value);
+    localStorage.setItem('or_notification_cadence', value);
   }
 
   function handleLogin() {
@@ -270,6 +284,7 @@ export default function HomePage() {
   const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
   const releasedByMe = schedule.releasedSlots.filter(r => r.ownerDeptId === activeDeptId).length;
   const claimedByMe = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId).length;
+  const acquiredFromOtherDepts = schedule.releasedSlots.filter(r => r.claimedByDeptId === activeDeptId && r.ownerDeptId !== activeDeptId).length;
   const myPendingRequests = schedule.slotRequests.filter(r => r.requestingDeptId === activeDeptId && r.status === 'pending').length;
   const isManager = userRole === 'manager';
   const canViewDashboard = isManager;
@@ -333,6 +348,22 @@ export default function HomePage() {
                 {schedule.departments.map(d => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
+              </select>
+            </div>
+          )}
+
+          {userRole === 'manager' && (
+            <div className="flex items-center gap-2 ml-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+              <span className="text-xs text-gray-500 whitespace-nowrap">全科通知:</span>
+              <select
+                className="text-sm font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                value={notificationCadence}
+                onChange={e => handleNotificationCadenceChange(e.target.value as NotificationCadence)}
+              >
+                <option value="instant">その都度</option>
+                <option value="30m">30分おき</option>
+                <option value="1h">1時間おき</option>
+                <option value="6h">6時間おき</option>
               </select>
             </div>
           )}
@@ -506,6 +537,10 @@ export default function HomePage() {
                 <div className="text-[10px] text-emerald-600 font-bold uppercase tracking-[0.08em]">引受済</div>
                 <div className="mt-1 text-xl font-bold text-emerald-700">{claimedByMe}</div>
               </div>
+              <div className="rounded-xl border border-cyan-100 bg-cyan-50 p-3">
+                <div className="text-[10px] text-cyan-600 font-bold uppercase tracking-[0.08em]">他科枠獲得</div>
+                <div className="mt-1 text-xl font-bold text-cyan-700">{acquiredFromOtherDepts}</div>
+              </div>
               <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
                 <div className="text-[10px] text-amber-600 font-bold uppercase tracking-[0.08em]">申請中</div>
                 <div className="mt-1 text-xl font-bold text-amber-700">{myPendingRequests}</div>
@@ -599,6 +634,7 @@ export default function HomePage() {
               surgeries={schedule.surgeries}
               currentUserRole={userRole}
               currentDeptId={activeDeptId}
+              notificationCadence={notificationCadence}
               onClaim={schedule.claimSlot}
               onCancelRelease={schedule.cancelRelease}
             />

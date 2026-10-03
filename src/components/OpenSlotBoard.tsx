@@ -15,12 +15,13 @@ interface Props {
   surgeries: Surgery[];
   currentUserRole?: 'manager' | 'dept';
   currentDeptId?: string;
+  notificationCadence?: 'instant' | '30m' | '1h' | '6h';
   onClaim: (releaseId: string, deptId: string, deptName: string) => void;
   onCancelRelease: (releaseId: string) => void;
 }
 
 export default function OpenSlotBoard({
-  releasedSlots, absences, departments, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', onClaim, onCancelRelease
+  releasedSlots, absences, departments, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', notificationCadence = 'instant', onClaim, onCancelRelease
 }: Props) {
   const [tab, setTab] = useState<'advance' | 'urgent'>('urgent');
   const [claimDept, setClaimDept] = useState<Record<string, string>>({});
@@ -97,6 +98,11 @@ export default function OpenSlotBoard({
     .filter(r => r.claimedByDeptId)
     .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
     .slice(0, 5);
+  const cadenceLabel =
+    notificationCadence === 'instant' ? 'その都度' :
+    notificationCadence === '30m' ? '30分おき' :
+    notificationCadence === '1h' ? '1時間おき' :
+    '6時間おき';
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -112,6 +118,14 @@ export default function OpenSlotBoard({
         <div className="flex items-center justify-between gap-2 mb-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">枠獲得通知</p>
           <span className="text-[10px] text-red-600 bg-white px-2 py-0.5 rounded-full">全診療科共有</span>
+        </div>
+
+        <div className="rounded-xl border border-red-200 bg-white px-3 py-2 mb-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">通知頻度</span>
+            <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">{cadenceLabel}</span>
+          </div>
+          <p className="text-xs text-gray-600 mt-1">引き受けが確定した時点から、全診療科へ{cadenceLabel}の間隔で共有されます。</p>
         </div>
 
         <div className="rounded-xl border border-red-200 bg-white px-3 py-2 mb-3">

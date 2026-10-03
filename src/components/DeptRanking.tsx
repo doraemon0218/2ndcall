@@ -32,12 +32,7 @@ export default function DeptRanking({ weekStart, allocations, surgeries, release
     const ownUsedMin = ownSlots.reduce((sum, s) => sum + s.usedMinutes, 0);
     const ownRate = ownAllocatedMin > 0 ? Math.round((ownUsedMin / ownAllocatedMin) * 100) : 0;
 
-    const claimed = surgeries.filter(s => {
-      if (s.deptId !== dept.id) return false;
-      const alloc = allocations.find(a => a.id === s.allocationId);
-      return alloc && alloc.deptId !== dept.id;
-    });
-
+    const claimedFromOthers = releasedSlots.filter(r => r.claimedByDeptId === dept.id && r.ownerDeptId !== dept.id).length;
     const released = releasedSlots.filter(r => r.ownerDeptId === dept.id).length;
     const approved = slotRequests.filter(r => r.requestingDeptId === dept.id && r.status === 'approved').length;
 
@@ -46,7 +41,7 @@ export default function DeptRanking({ weekStart, allocations, surgeries, release
       ownAllocatedMin,
       ownUsedMin,
       ownRate,
-      claimedSlots: claimed.length,
+      claimedSlots: claimedFromOthers,
       releasedSlots: released,
       approvedRequests: approved,
     };
@@ -89,8 +84,8 @@ export default function DeptRanking({ weekStart, allocations, surgeries, release
                   </span>
                 )}
                 {s.claimedSlots > 0 && (
-                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                    +{s.claimedSlots}枠引受
+                  <span className="px-2 py-0.5 bg-cyan-100 text-cyan-700 rounded-full font-medium">
+                    他科枠{ s.claimedSlots }件
                   </span>
                 )}
                 {s.releasedSlots > 0 && (
