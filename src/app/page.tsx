@@ -568,6 +568,8 @@ export default function HomePage() {
               releasedSlots={schedule.releasedSlots}
               departments={schedule.departments}
               rooms={schedule.rooms}
+              currentUserRole={userRole}
+              currentDeptId={activeDeptId}
               onAddSurgery={schedule.addSurgery}
               onUpdateSurgery={schedule.updateSurgery}
               onDeleteSurgery={schedule.deleteSurgery}
@@ -595,6 +597,8 @@ export default function HomePage() {
               departments={schedule.departments}
               allocations={schedule.allocations}
               surgeries={schedule.surgeries}
+              currentUserRole={userRole}
+              currentDeptId={activeDeptId}
               onClaim={schedule.claimSlot}
               onCancelRelease={schedule.cancelRelease}
             />

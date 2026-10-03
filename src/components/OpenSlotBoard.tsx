@@ -13,12 +13,14 @@ interface Props {
   departments: Department[];
   allocations: SlotAllocation[];
   surgeries: Surgery[];
+  currentUserRole?: 'manager' | 'dept';
+  currentDeptId?: string;
   onClaim: (releaseId: string, deptId: string, deptName: string) => void;
   onCancelRelease: (releaseId: string) => void;
 }
 
 export default function OpenSlotBoard({
-  releasedSlots, absences, departments, allocations, surgeries, onClaim, onCancelRelease
+  releasedSlots, absences, departments, allocations, surgeries, currentUserRole = 'manager', currentDeptId = '', onClaim, onCancelRelease
 }: Props) {
   const [tab, setTab] = useState<'advance' | 'urgent'>('urgent');
   const [claimDept, setClaimDept] = useState<Record<string, string>>({});
@@ -65,7 +67,7 @@ export default function OpenSlotBoard({
   });
 
   function handleClaim(releaseId: string) {
-    const deptId = claimDept[releaseId];
+    const deptId = currentUserRole === 'dept' ? (currentDeptId || claimDept[releaseId]) : claimDept[releaseId];
     if (!deptId) return;
     const dept = departments.find(d => d.id === deptId);
     if (!dept) return;
@@ -178,19 +180,25 @@ export default function OpenSlotBoard({
                           <p className="text-xs text-blue-700 font-bold mt-1">✓ {r.claimedByDeptName} が引き受け済み</p>
                         ) : (
                           <div className="flex gap-2 mt-2">
-                            <select
-                              className="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              value={claimDept[r.id] ?? ''}
-                              onChange={e => setClaimDept(prev => ({ ...prev, [r.id]: e.target.value }))}
-                            >
-                              <option value="">診療科を選択...</option>
-                              {departments.filter(d => d.id !== r.ownerDeptId).map(d => (
-                                <option key={d.id} value={d.id}>{d.name}</option>
-                              ))}
-                            </select>
+                            {currentUserRole === 'manager' ? (
+                              <select
+                                className="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={claimDept[r.id] ?? ''}
+                                onChange={e => setClaimDept(prev => ({ ...prev, [r.id]: e.target.value }))}
+                              >
+                                <option value="">診療科を選択...</option>
+                                {departments.filter(d => d.id !== r.ownerDeptId).map(d => (
+                                  <option key={d.id} value={d.id}>{d.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="flex-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-800 font-bold">
+                                自科: {departments.find(d => d.id === currentDeptId)?.name ?? '自科'}
+                              </div>
+                            )}
                             <button
                               onClick={() => handleClaim(r.id)}
-                              disabled={!claimDept[r.id]}
+                              disabled={currentUserRole === 'manager' && !claimDept[r.id]}
                               className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
                             >
                               引き受ける
@@ -265,19 +273,25 @@ export default function OpenSlotBoard({
                             ? <p className="text-xs text-blue-700 font-bold mt-1">✓ {r.claimedByDeptName}</p>
                             : (
                               <div className="flex gap-2 mt-2">
-                                <select
-                                  className="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5"
-                                  value={claimDept[r.id] ?? ''}
-                                  onChange={e => setClaimDept(prev => ({ ...prev, [r.id]: e.target.value }))}
-                                >
-                                  <option value="">診療科を選択...</option>
-                                  {departments.filter(d => d.id !== r.ownerDeptId).map(d => (
-                                    <option key={d.id} value={d.id}>{d.name}</option>
-                                  ))}
-                                </select>
+                                {currentUserRole === 'manager' ? (
+                                  <select
+                                    className="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5"
+                                    value={claimDept[r.id] ?? ''}
+                                    onChange={e => setClaimDept(prev => ({ ...prev, [r.id]: e.target.value }))}
+                                  >
+                                    <option value="">診療科を選択...</option>
+                                    {departments.filter(d => d.id !== r.ownerDeptId).map(d => (
+                                      <option key={d.id} value={d.id}>{d.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="flex-1 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-800 font-bold">
+                                    自科: {departments.find(d => d.id === currentDeptId)?.name ?? '自科'}
+                                  </div>
+                                )}
                                 <button
                                   onClick={() => handleClaim(r.id)}
-                                  disabled={!claimDept[r.id]}
+                                  disabled={currentUserRole === 'manager' && !claimDept[r.id]}
                                   className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg"
                                 >
                                   引き受ける

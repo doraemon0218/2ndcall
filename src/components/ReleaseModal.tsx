@@ -8,17 +8,19 @@ interface Props {
   date: string;
   existingRelease?: ReleasedSlot;
   departments: Department[];
+  currentUserRole?: 'manager' | 'dept';
+  currentDeptId?: string;
   onRelease: (params: { releasedBy: string; message: string; claimDeptId?: string; claimDeptName?: string }) => void;
   onClaim: (deptId: string, deptName: string) => void;
   onCancel: () => void;
   onClose: () => void;
 }
 
-export default function ReleaseModal({ allocation, date, existingRelease, departments, onRelease, onClaim, onCancel, onClose }: Props) {
+export default function ReleaseModal({ allocation, date, existingRelease, departments, currentUserRole = 'manager', currentDeptId = '', onRelease, onClaim, onCancel, onClose }: Props) {
   const [tab, setTab] = useState<'release' | 'claim'>(existingRelease && !existingRelease.claimedByDeptId ? 'claim' : 'release');
   const [releasedBy, setReleasedBy] = useState('');
   const [message, setMessage] = useState('');
-  const [claimDeptId, setClaimDeptId] = useState('');
+  const [claimDeptId, setClaimDeptId] = useState(currentUserRole === 'dept' && currentDeptId ? currentDeptId : '');
 
   function handleRelease(e: React.FormEvent) {
     e.preventDefault();
@@ -28,9 +30,11 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
 
   function handleClaim(e: React.FormEvent) {
     e.preventDefault();
-    const dept = departments.find(d => d.id === claimDeptId);
+    const deptId = currentUserRole === 'dept' ? (currentDeptId || claimDeptId) : claimDeptId;
+    if (!deptId) return;
+    const dept = departments.find(d => d.id === deptId);
     if (!dept) return;
-    onClaim(claimDeptId, dept.name);
+    onClaim(deptId, dept.name);
     onClose();
   }
 
@@ -128,20 +132,26 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
               )}
               {existingRelease && !existingRelease.claimedByDeptId && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">引き受ける診療科</label>
-                    <select
-                      required
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      value={claimDeptId}
-                      onChange={e => setClaimDeptId(e.target.value)}
-                    >
-                      <option value="">診療科を選択...</option>
-                      {departments.filter(d => d.id !== allocation.deptId).map(d => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {currentUserRole === 'manager' ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">引き受ける診療科</label>
+                      <select
+                        required
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        value={claimDeptId}
+                        onChange={e => setClaimDeptId(e.target.value)}
+                      >
+                        <option value="">診療科を選択...</option>
+                        {departments.filter(d => d.id !== allocation.deptId).map(d => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                      自診療科としてこの枠を引き受けます: <span className="font-bold">{departments.find(d => d.id === currentDeptId)?.name ?? '自科'}</span>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <button type="button" onClick={onClose} className="flex-1 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
                       キャンセル

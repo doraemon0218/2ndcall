@@ -15,6 +15,8 @@ interface Props {
   releasedSlots: ReleasedSlot[];
   departments: Department[];
   rooms: OperatingRoom[];
+  currentUserRole?: 'manager' | 'dept';
+  currentDeptId?: string;
   onAddSurgery: (s: Omit<Surgery, 'id'>) => void;
   onUpdateSurgery: (id: string, updates: Partial<Surgery>) => void;
   onDeleteSurgery: (id: string) => void;
@@ -35,6 +37,7 @@ interface ReleaseModalState { slot: WeeklySlot }
 
 export default function WeeklySchedule({
   weekStart, allocations, surgeries, releasedSlots, departments, rooms,
+  currentUserRole = 'manager', currentDeptId = '',
   onAddSurgery, onUpdateSurgery, onDeleteSurgery,
   onReleaseSlot, onClaimSlot, onCancelRelease,
 }: Props) {
@@ -244,6 +247,8 @@ export default function WeeklySchedule({
           date={releaseModal.slot.date}
           existingRelease={releaseModal.slot.releasedSlot}
           departments={departments}
+          currentUserRole={currentUserRole}
+          currentDeptId={currentDeptId}
           onRelease={({ releasedBy, message }) => onReleaseSlot({
             allocationId: releaseModal.slot.allocation.id,
             date: releaseModal.slot.date,
