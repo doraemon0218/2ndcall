@@ -95,9 +95,17 @@ export default function HomePage() {
   }
 
   function handleLogin() {
-    if (loginRole === 'dept' && !loginDeptId) {
-      setLoginError('診療科部長として入室する場合は、所属診療科を選択してください。');
-      return;
+    if (loginRole === 'dept') {
+      if (!loginDeptId) {
+        setLoginError('診療科部長として入室する場合は、所属診療科を選択してください。');
+        return;
+      }
+
+      const password = window.prompt('診療科部長として入室するには認証が必要です\nパスワードを入力してください');
+      if (password !== '1234') {
+        setLoginError('パスワードが一致しないため入室できません。');
+        return;
+      }
     }
 
     setLoginError('');
