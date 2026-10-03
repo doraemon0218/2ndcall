@@ -18,13 +18,15 @@ interface Props {
 
 export default function ReleaseModal({ allocation, date, existingRelease, departments, currentUserRole = 'manager', currentDeptId = '', onRelease, onClaim, onCancel, onClose }: Props) {
   const [tab, setTab] = useState<'release' | 'claim'>(existingRelease && !existingRelease.claimedByDeptId ? 'claim' : 'release');
-  const [releasedBy, setReleasedBy] = useState('');
+  const [releasedBy, setReleasedBy] = useState(currentUserRole === 'dept' && currentDeptId ? departments.find(d => d.id === currentDeptId)?.name ?? '' : '');
   const [message, setMessage] = useState('');
+  const [messagePreset, setMessagePreset] = useState('');
   const [claimDeptId, setClaimDeptId] = useState(currentUserRole === 'dept' && currentDeptId ? currentDeptId : '');
 
   function handleRelease(e: React.FormEvent) {
     e.preventDefault();
-    onRelease({ releasedBy, message });
+    const finalMessage = messagePreset === 'other' ? message : messagePreset;
+    onRelease({ releasedBy, message: finalMessage || message });
     onClose();
   }
 
@@ -104,13 +106,30 @@ export default function ReleaseModal({ allocation, date, existingRelease, depart
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">コメント（理由・条件など）</label>
-                <textarea
-                  rows={3}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  placeholder="例: 手術件数が少なく午後が空きそうです。どの科でもご利用ください。"
-                />
+                <select
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={messagePreset}
+                  onChange={e => {
+                    setMessagePreset(e.target.value);
+                    if (e.target.value !== 'other') setMessage('');
+                  }}
+                >
+                  <option value="">理由を選択...</option>
+                  <option value="学会で不在">学会で不在</option>
+                  <option value="執刀医の不足">執刀医の不足</option>
+                  <option value="待ち患者がいない">待ち患者がいない</option>
+                  <option value="other">その他</option>
+                </select>
+                {messagePreset === 'other' && (
+                  <textarea
+                    rows={3}
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    placeholder="その他の理由を入力してください"
+                    required
+                  />
+                )}
               </div>
               <div className="flex gap-2">
                 <button type="button" onClick={onClose} className="flex-1 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
