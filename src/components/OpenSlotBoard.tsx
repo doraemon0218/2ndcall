@@ -79,6 +79,20 @@ export default function OpenSlotBoard({
   const advanceCount = advanceReleased.length + absenceAffected.length;
   const positiveOpen = releasedSlots.filter(r => r.reasonType === 'positive').length;
   const negativeOpen = releasedSlots.filter(r => r.reasonType === 'negative').length;
+  const claimWindowSlots = releasedSlots.filter(r => {
+    if (r.claimedByDeptId) return false;
+
+    const slotDate = parseISO(r.date);
+    const releaseDate = parseISO(r.releasedAt);
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const previousWeekThu = addDays(weekStart, -4);
+    const currentThu = addDays(weekStart, 3);
+    const currentFri = addDays(weekStart, 4);
+
+    const matchesReleaseWorkflow = releaseDate >= previousWeekThu && releaseDate <= addDays(currentFri, 1);
+    const matchesClaimWindow = slotDate >= currentThu && slotDate <= currentFri;
+    return matchesReleaseWorkflow && matchesClaimWindow;
+  });
   const claimFeed = releasedSlots
     .filter(r => r.claimedByDeptId)
     .sort((a, b) => (b.claimedAt ?? '').localeCompare(a.claimedAt ?? ''))
@@ -99,6 +113,20 @@ export default function OpenSlotBoard({
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">枠獲得通知</p>
           <span className="text-[10px] text-red-600 bg-white px-2 py-0.5 rounded-full">全診療科共有</span>
         </div>
+
+        <div className="rounded-xl border border-red-200 bg-white px-3 py-2 mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">前週木曜の空き枠可視化</p>
+              <h4 className="text-sm font-bold text-gray-900 mt-0.5">木曜午後〜金曜日に引き受け可能</h4>
+            </div>
+            <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full">{claimWindowSlots.length}件</span>
+          </div>
+          <p className="mt-1 text-xs text-gray-600">
+            前週木曜日に共有された枠は、木曜午後と金曜日に見える化され、引き受けを待つ状態として自動で伝達されます。
+          </p>
+        </div>
+
         <div className="grid gap-2 sm:grid-cols-2 mb-3">
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5">
             <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">ポジティブ理由</div>
