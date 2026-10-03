@@ -29,6 +29,10 @@ export default function HomePage() {
   // ログイン中の立場（デモ用）
   const [userRole, setUserRole] = useState<UserRole>('dept');
   const [activeDeptId, setActiveDeptId] = useState('');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loginRole, setLoginRole] = useState<UserRole>('dept');
+  const [loginDeptId, setLoginDeptId] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   useEffect(() => {
     const raw = localStorage.getItem('or_absences');
@@ -37,25 +41,73 @@ export default function HomePage() {
 
   // 診療科が初期化されたらデフォルトを設定
   useEffect(() => {
-    if (schedule.departments.length > 0 && !activeDeptId) {
+    if (schedule.departments.length > 0) {
       const saved = localStorage.getItem('or_active_dept');
-      setActiveDeptId(saved ?? schedule.departments[0].id);
+      const defaultDept = saved && schedule.departments.some(d => d.id === saved)
+        ? saved
+        : schedule.departments[0].id;
+
+      setActiveDeptId(prev => prev || defaultDept);
+      setLoginDeptId(prev => prev || defaultDept);
     }
-  }, [schedule.departments, activeDeptId]);
+  }, [schedule.departments]);
 
   useEffect(() => {
     const savedRole = localStorage.getItem('or_user_role');
-    if (savedRole === 'manager' || savedRole === 'dept') setUserRole(savedRole);
+    if (savedRole === 'manager' || savedRole === 'dept') {
+      setUserRole(savedRole);
+      setLoginRole(savedRole);
+    }
   }, []);
 
   function handleDeptChange(deptId: string) {
     setActiveDeptId(deptId);
+    setLoginDeptId(deptId);
     localStorage.setItem('or_active_dept', deptId);
+  }
+
+  function handleDeptSecurityChange(nextDeptId: string) {
+    if (userRole !== 'dept') {
+      handleDeptChange(nextDeptId);
+      return;
+    }
+
+    const currentDeptId = activeDeptId || loginDeptId || schedule.departments[0]?.id || '';
+    if (nextDeptId === currentDeptId) {
+      handleDeptChange(nextDeptId);
+      return;
+    }
+
+    const input = window.prompt('他診療科切替には認証が必要です\nパスワードを入力してください');
+    if (input === '1234') {
+      setLoginError('');
+      handleDeptChange(nextDeptId);
+      return;
+    }
+
+    setLoginError('パスワードが一致しないため、他診療科への切替はできません。');
   }
 
   function handleRoleChange(role: UserRole) {
     setUserRole(role);
+    setLoginRole(role);
     localStorage.setItem('or_user_role', role);
+  }
+
+  function handleLogin() {
+    if (loginRole === 'dept' && !loginDeptId) {
+      setLoginError('診療科部長として入室する場合は、所属診療科を選択してください。');
+      return;
+    }
+
+    setLoginError('');
+    const nextDeptId = loginRole === 'dept' ? loginDeptId : (activeDeptId || schedule.departments[0]?.id || '');
+
+    setUserRole(loginRole);
+    setActiveDeptId(nextDeptId);
+    localStorage.setItem('or_user_role', loginRole);
+    if (nextDeptId) localStorage.setItem('or_active_dept', nextDeptId);
+    setIsLoggedIn(true);
   }
 
   const applyAutoReleaseForAbsence = useCallback((absence: Omit<Absence, 'id' | 'createdAt'>) => {
@@ -133,6 +185,78 @@ export default function HomePage() {
     );
   }
 
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+        <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white shadow-xl p-6 sm:p-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white text-lg font-bold">OR</div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">OR スケジューラ</p>
+              <h1 className="text-2xl font-bold text-slate-900">入室</h1>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">ログイン者の立場</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setLoginRole('dept')}
+                  className={`rounded-2xl border p-4 text-left transition ${loginRole === 'dept' ? 'border-blue-300 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-slate-50 hover:border-slate-300'}`}
+                >
+                  <div className="text-sm font-bold text-slate-800">診療科部長</div>
+                  <div className="text-xs text-slate-500 mt-1">自科の枠を管理する</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginRole('manager')}
+                  className={`rounded-2xl border p-4 text-left transition ${loginRole === 'manager' ? 'border-blue-300 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-slate-50 hover:border-slate-300'}`}
+                >
+                  <div className="text-sm font-bold text-slate-800">手術室管理者</div>
+                  <div className="text-xs text-slate-500 mt-1">全診療科の状況を見る</div>
+                </button>
+              </div>
+            </div>
+
+            {loginRole === 'dept' && (
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">所属診療科</label>
+                <select
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none"
+                  value={loginDeptId}
+                  onChange={e => {
+                    setLoginDeptId(e.target.value);
+                    setLoginError('');
+                  }}
+                >
+                  {schedule.departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {loginError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogin}
+              className="w-full rounded-xl bg-blue-600 px-4 py-3 text-base font-bold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              {loginRole === 'dept' ? '診療科部長として入室' : '手術室管理者として入室'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const openSlotCount = schedule.releasedSlots.filter(r => !r.claimedByDeptId).length;
   const activeDept = schedule.departments.find(d => d.id === activeDeptId);
   const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
@@ -183,27 +307,20 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Role selector */}
-          <div className="flex items-center gap-2 ml-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
+          <div className={`flex items-center gap-2 ml-2 rounded-xl px-3 py-1.5 border ${userRole === 'manager' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
             <span className="text-xs text-gray-500 whitespace-nowrap">立場:</span>
-            <select
-              className="text-sm font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
-              value={userRole}
-              onChange={e => handleRoleChange(e.target.value as UserRole)}
-            >
-              <option value="dept">診療科部長</option>
-              <option value="manager">手術室管理者</option>
-            </select>
+            <span className={`text-sm font-bold ${userRole === 'manager' ? 'text-blue-700' : 'text-gray-800'}`}>
+              {userRole === 'manager' ? '手術室管理者' : `${activeDept?.name ?? '診療科'} 部長`}
+            </span>
           </div>
 
-          {/* Dept selector (= "ログイン中の診療科") */}
           {userRole === 'dept' && (
             <div className="flex items-center gap-2 ml-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5">
               <span className="text-xs text-gray-500 whitespace-nowrap">診療科:</span>
               <select
                 className="text-sm font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
                 value={activeDeptId}
-                onChange={e => handleDeptChange(e.target.value)}
+                onChange={e => handleDeptSecurityChange(e.target.value)}
               >
                 {schedule.departments.map(d => (
                   <option key={d.id} value={d.id}>{d.name}</option>
@@ -212,11 +329,16 @@ export default function HomePage() {
             </div>
           )}
 
-          {userRole === 'manager' && (
-            <div className="flex items-center gap-2 ml-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-1.5">
-              <span className="text-xs font-bold text-blue-700 whitespace-nowrap">手術室管理者</span>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              setIsLoggedIn(false);
+              setLoginError('');
+            }}
+            className="ml-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200"
+          >
+            ログイン切替
+          </button>
 
           {/* View tabs */}
           <div className="flex bg-gray-100 rounded-lg p-1 gap-1 ml-2">
