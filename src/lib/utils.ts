@@ -146,6 +146,10 @@ export function getDeptBgStyle(color: string): string {
     'bg-orange-500': '#f97316',
     'bg-cyan-500':   '#06b6d4',
     'bg-lime-500':   '#84cc16',
+    'bg-sky-500':    '#0ea5e9',
+    'bg-amber-500':  '#f59e0b',
+    'bg-slate-500':  '#64748b',
+    'bg-violet-500': '#8b5cf6',
   };
   return map[color] ?? '#6b7280';
 }

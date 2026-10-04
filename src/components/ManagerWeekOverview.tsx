@@ -14,6 +14,7 @@ interface Props {
   departments: Department[];
   rooms: OperatingRoom[];
   onOpenBoard?: () => void;
+  freeCutoffMinutes?: number; // この時間以上の空きを「一部空き」とみなす（運用設定）
 }
 
 type BandStatus = 'unassigned' | 'unused' | 'partial' | 'full' | 'released' | 'pending' | 'moved';
@@ -34,7 +35,6 @@ const WEEK_OPTIONS = [
   { offset: 2, label: '再来週' },
 ];
 
-const MIN_FREE_MINUTES = 60;  // 入替時間など短い隙間は空きとみなさない
 const AM_ENTRY_MINUTES = 8 * 60 + 45; // 午前の入室開始（8:45）より前は準備時間
 
 const STATUS_STYLE: Record<BandStatus, { box: string; badge: string; label: string }> = {
@@ -47,7 +47,7 @@ const STATUS_STYLE: Record<BandStatus, { box: string; badge: string; label: stri
   moved:      { box: 'border-blue-200 bg-blue-50', badge: 'bg-blue-100 text-blue-700', label: '他科へ移動' },
 };
 
-function subtractRanges(window: [number, number], busy: Array<[number, number]>): Array<[number, number]> {
+function subtractRanges(window: [number, number], busy: Array<[number, number]>, minFree: number): Array<[number, number]> {
   const sorted = [...busy].sort((a, b) => a[0] - b[0]);
   const free: Array<[number, number]> = [];
   let cursor = window[0];
@@ -59,10 +59,10 @@ function subtractRanges(window: [number, number], busy: Array<[number, number]>)
     cursor = Math.max(cursor, end);
   }
   if (cursor < window[1]) free.push([cursor, window[1]]);
-  return free.filter(([s, e]) => e - s >= MIN_FREE_MINUTES);
+  return free.filter(([s, e]) => e - s >= minFree);
 }
 
-export default function ManagerWeekOverview({ allocations, surgeries, releasedSlots, slotRequests, departments, rooms, onOpenBoard }: Props) {
+export default function ManagerWeekOverview({ allocations, surgeries, releasedSlots, slotRequests, departments, rooms, onOpenBoard, freeCutoffMinutes = 60 }: Props) {
   // 募集期間（木曜午後〜金曜）は来週を最初に表示
   const [weekOffset, setWeekOffset] = useState(() => (getActiveRecruitWeek() ? 1 : 0));
   const weekDates = getWeekDates(addWeeks(getOperatingWeekStart(), weekOffset));
@@ -87,9 +87,9 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
     const busy = surgeries
       .filter(s => s.date === dateStr && s.roomId === roomId && s.status !== 'cancelled')
       .map(s => [toTimeMinutes(s.startTime), toTimeMinutes(s.endTime)] as [number, number]);
-    const freeRanges = subtractRanges(window, busy);
+    const freeRanges = subtractRanges(window, busy, freeCutoffMinutes);
+    const hasSurgery = busy.some(([s, e]) => e > window[0] && s < window[1]);
     const freeMinutes = freeRanges.reduce((sum, [s, e]) => sum + (e - s), 0);
-    const windowMinutes = window[1] - window[0];
 
     if (!alloc) {
       return { period, status: 'unassigned', freeRanges, freeMinutes, pendingDeptNames: [] };
@@ -104,7 +104,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
     if (release?.claimedByDeptId) status = 'moved';
     else if (release && pendingDeptNames.length > 0) status = 'pending';
     else if (release) status = 'released';
-    else if (freeMinutes >= windowMinutes) status = 'unused';
+    else if (!hasSurgery) status = 'unused'; // 予定が1件も入っていない
     else if (freeMinutes > 0) status = 'partial';
     else status = 'full';
 
@@ -246,7 +246,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
             <span className={`rounded px-1.5 py-0.5 font-bold ${STATUS_STYLE[status].badge}`}>{STATUS_STYLE[status].label}</span>
           </span>
         ))}
-        <span className="ml-auto">時刻は空いている時間帯（{MIN_FREE_MINUTES}分以上）</span>
+        <span className="ml-auto">「一部空き」は予定のない時間が{freeCutoffMinutes / 60}時間以上ある枠（集計タブで変更可）</span>
       </div>
     </section>
   );

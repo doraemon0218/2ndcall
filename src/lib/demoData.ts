@@ -9,63 +9,119 @@ import { Department, OperatingRoom, SlotAllocation, Surgery, ReleasedSlot, SlotR
 import { getOperatingWeekStart } from './utils';
 import type { AppEvent } from './eventLog';
 
+// 当院の標準手術枠（新設案）に合わせた診療科。shortName は院内の略称（予定表の取込照合にも使う）
 export const DEMO_DEPARTMENTS: Department[] = [
-  { id: 'general', name: '消化器外科',   shortName: '消外', color: 'bg-green-500',   textColor: 'text-green-700' },
-  { id: 'ortho',   name: '整形外科',     shortName: '整形', color: 'bg-blue-500',    textColor: 'text-blue-700' },
-  { id: 'cardio',  name: '心臓血管外科', shortName: '心外', color: 'bg-red-500',     textColor: 'text-red-700' },
-  { id: 'neuro',   name: '脳神経外科',   shortName: '脳外', color: 'bg-purple-500',  textColor: 'text-purple-700' },
-  { id: 'uro',     name: '泌尿器科',     shortName: '泌尿', color: 'bg-yellow-500',  textColor: 'text-yellow-700' },
-  { id: 'gyne',    name: '産婦人科',     shortName: '産婦', color: 'bg-pink-500',    textColor: 'text-pink-700' },
-  { id: 'thoracic', name: '呼吸器外科',  shortName: '呼外', color: 'bg-teal-500',    textColor: 'text-teal-700' },
-  { id: 'breast',  name: '乳腺外科',     shortName: '乳腺', color: 'bg-rose-500',    textColor: 'text-rose-700' },
-  { id: 'ent',     name: '耳鼻咽喉科',   shortName: '耳鼻', color: 'bg-orange-500',  textColor: 'text-orange-700' },
-  { id: 'eye',     name: '眼科',         shortName: '眼科', color: 'bg-cyan-500',    textColor: 'text-cyan-700' },
-  { id: 'plastic', name: '形成外科',     shortName: '形成', color: 'bg-indigo-500',  textColor: 'text-indigo-700' },
-  { id: 'derma',   name: '皮膚科',       shortName: '皮膚', color: 'bg-lime-500',    textColor: 'text-lime-700' },
+  { id: 'cardio_int', name: '循環器内科',   shortName: '循内科',   color: 'bg-sky-500',     textColor: 'text-sky-700' },
+  { id: 'derma',      name: '皮膚科',       shortName: '皮膚科',   color: 'bg-lime-500',    textColor: 'text-lime-700' },
+  { id: 'general',    name: '消化器外科',   shortName: '消化外',   color: 'bg-green-500',   textColor: 'text-green-700' },
+  { id: 'thoracic',   name: '呼吸器外科',   shortName: '呼吸外',   color: 'bg-teal-500',    textColor: 'text-teal-700' },
+  { id: 'neuro',      name: '脳神経外科',   shortName: '脳外科',   color: 'bg-purple-500',  textColor: 'text-purple-700' },
+  { id: 'cardio',     name: '心臓血管外科', shortName: '心血管',   color: 'bg-red-500',     textColor: 'text-red-700' },
+  { id: 'gyne',       name: '産婦人科',     shortName: '産婦人',   color: 'bg-pink-500',    textColor: 'text-pink-700' },
+  { id: 'eye',        name: '眼科',         shortName: '眼科',     color: 'bg-cyan-500',    textColor: 'text-cyan-700' },
+  { id: 'ent',        name: '耳鼻咽喉科・頭頸部外科', shortName: '耳鼻頸', color: 'bg-orange-500', textColor: 'text-orange-700' },
+  { id: 'ortho',      name: '整形外科',     shortName: '整形外',   color: 'bg-blue-500',    textColor: 'text-blue-700' },
+  { id: 'uro',        name: '泌尿器科',     shortName: '泌尿器',   color: 'bg-yellow-500',  textColor: 'text-yellow-700' },
+  { id: 'dental',     name: '歯科',         shortName: '歯科',     color: 'bg-amber-500',   textColor: 'text-amber-700' },
+  { id: 'plastic',    name: '形成外科',     shortName: '形成外',   color: 'bg-indigo-500',  textColor: 'text-indigo-700' },
+  { id: 'dialysis',   name: '腎透析',       shortName: '腎透析',   color: 'bg-slate-500',   textColor: 'text-slate-700' },
+  { id: 'breast',     name: '乳腺外科',     shortName: '乳腺外',   color: 'bg-rose-500',    textColor: 'text-rose-700' },
+  { id: 'anesth',     name: '麻酔科（診察）', shortName: '麻酔診察', color: 'bg-violet-500', textColor: 'text-violet-700' },
 ];
 
-export const DEMO_ROOMS: OperatingRoom[] = Array.from({ length: 10 }, (_, i) => ({
+// 当院の標準手術枠：診療科ごとの曜日別の枠数（1 = 1室の終日、0.5 = 半日）
+const WEEKLY_UNITS: Record<string, [number, number, number, number, number]> = {
+  cardio_int: [0, 0, 1, 1, 0],
+  derma:      [0, 0, 0, 0, 0],
+  general:    [2, 2, 2, 1, 1],
+  thoracic:   [0, 1, 0, 2, 0],
+  neuro:      [1, 0, 1, 0, 1],
+  cardio:     [2, 2, 0, 1, 1],
+  gyne:       [1, 2, 1, 2, 0],
+  eye:        [0, 0, 1, 0, 0],
+  ent:        [0, 0, 2, 1, 2],
+  ortho:      [1, 1, 0, 0, 2],
+  uro:        [1, 0, 1, 0, 2],
+  dental:     [0, 0, 0.5, 0, 0],
+  plastic:    [0, 1, 0, 1, 0],
+  dialysis:   [0, 0, 0, 0, 0],
+  breast:     [1, 0, 0, 1, 0],
+  anesth:     [1, 1, 0.5, 1, 1],
+};
+
+const ROOM_COUNT = Math.max(...[0, 1, 2, 3, 4].map(d => Math.ceil(Object.values(WEEKLY_UNITS).reduce((sum, u) => sum + u[d], 0))));
+
+export const DEMO_ROOMS: OperatingRoom[] = Array.from({ length: ROOM_COUNT }, (_, i) => ({
   id: `or${i + 1}`,
   name: `手術室${i + 1}`,
   order: i + 1,
 }));
 
-// 週間の枠表：手術室 × 曜日（1=月〜5=金）× 午前/午後。空文字は未割当（緊急用など）。
-type Cell = [am: string, pm: string];
-const TEMPLATE: Record<string, Record<number, Cell>> = {
-  or1:  { 1: ['ortho', 'ortho'],     2: ['ortho', 'ortho'],     3: ['ortho', 'ortho'],     4: ['ortho', 'ortho'],     5: ['ortho', 'ortho'] },
-  or2:  { 1: ['general', 'general'], 2: ['general', 'general'], 3: ['general', 'general'], 4: ['general', 'general'], 5: ['general', 'general'] },
-  or3:  { 1: ['cardio', 'cardio'],   2: ['thoracic', 'thoracic'], 3: ['cardio', 'cardio'], 4: ['thoracic', 'thoracic'], 5: ['cardio', 'cardio'] },
-  or4:  { 1: ['uro', 'uro'],         2: ['neuro', 'neuro'],     3: ['uro', 'uro'],         4: ['neuro', 'neuro'],     5: ['uro', 'uro'] },
-  or5:  { 1: ['gyne', 'gyne'],       2: ['gyne', 'gyne'],       3: ['breast', 'breast'],   4: ['gyne', 'gyne'],       5: ['plastic', 'plastic'] },
-  or6:  { 1: ['eye', 'ent'],         2: ['eye', 'ent'],         3: ['eye', 'ent'],         4: ['eye', 'ent'],         5: ['eye', 'ent'] },
-  or7:  { 1: ['breast', 'breast'],   2: ['uro', 'uro'],         3: ['general', 'general'], 4: ['uro', 'uro'],         5: ['breast', 'breast'] },
-  or8:  { 1: ['ent', 'ent'],         2: ['ortho', 'ortho'],     3: ['ent', 'ent'],         4: ['ortho', 'ortho'],     5: ['ortho', 'ortho'] },
-  or9:  { 1: ['general', 'general'], 2: ['plastic', 'plastic'], 3: ['general', 'general'], 4: ['derma', 'plastic'],   5: ['general', 'general'] },
-  or10: {},
-};
-
 const deptById = (id: string) => DEMO_DEPARTMENTS.find(d => d.id === id)!;
 
-export const DEMO_ALLOCATIONS: SlotAllocation[] = Object.entries(TEMPLATE).flatMap(([roomId, days]) =>
-  Object.entries(days).flatMap(([dow, cell]) =>
-    (['am', 'pm'] as const).flatMap((period, i) => {
-      const deptId = cell[i];
-      if (!deptId) return [];
-      const dept = deptById(deptId);
-      return [{
-        id: `${roomId}-${dow}-${period}`,
-        roomId,
-        dayOfWeek: Number(dow),
-        period,
-        ...PERIOD_HOURS[period],
-        deptId,
-        deptName: dept.name,
-        notes: '',
-      }];
-    }),
-  ),
-);
+// 枠数表を部屋に割り当てる。同じ科はできるだけ毎日同じ部屋にする。半日枠は1室の午前・午後に詰める。
+function buildAllocations(): SlotAllocation[] {
+  const preferred = new Map<string, number[]>();
+  const result: SlotAllocation[] = [];
+  const make = (roomIdx: number, dow: number, period: 'am' | 'pm', deptId: string): SlotAllocation => ({
+    id: `or${roomIdx + 1}-${dow}-${period}`,
+    roomId: `or${roomIdx + 1}`,
+    dayOfWeek: dow,
+    period,
+    ...PERIOD_HOURS[period],
+    deptId,
+    deptName: deptById(deptId).name,
+    notes: '',
+  });
+
+  for (let d = 0; d < 5; d++) {
+    const dow = d + 1;
+    const taken: Array<{ am?: string; pm?: string }> = Array.from({ length: ROOM_COUNT }, () => ({}));
+    const halves: string[] = [];
+    const free = (i: number) => !taken[i].am && !taken[i].pm;
+    const remaining = new Map<string, number>();
+    for (const dept of DEMO_DEPARTMENTS) {
+      const units = WEEKLY_UNITS[dept.id]?.[d] ?? 0;
+      const full = Math.floor(units);
+      if (units - full >= 0.5) halves.push(dept.id);
+      remaining.set(dept.id, full);
+    }
+    // 1) これまでと同じ部屋を先に確保
+    for (const dept of DEMO_DEPARTMENTS) {
+      for (const idx of preferred.get(dept.id) ?? []) {
+        if ((remaining.get(dept.id) ?? 0) > 0 && free(idx)) {
+          taken[idx] = { am: dept.id, pm: dept.id };
+          remaining.set(dept.id, remaining.get(dept.id)! - 1);
+        }
+      }
+    }
+    // 2) 残りは空いている部屋へ
+    for (const dept of DEMO_DEPARTMENTS) {
+      const prefs = preferred.get(dept.id) ?? [];
+      while ((remaining.get(dept.id) ?? 0) > 0) {
+        const idx = taken.findIndex((_, i) => free(i));
+        if (idx < 0) break;
+        taken[idx] = { am: dept.id, pm: dept.id };
+        remaining.set(dept.id, remaining.get(dept.id)! - 1);
+        if (!prefs.includes(idx)) prefs.push(idx);
+      }
+      preferred.set(dept.id, prefs);
+    }
+    for (const deptId of halves) {
+      let idx = taken.findIndex(t => (t.am && !t.pm) || (!t.am && t.pm));
+      if (idx < 0) idx = taken.findIndex(t => !t.am && !t.pm);
+      if (idx < 0) continue;
+      if (!taken[idx].am) taken[idx].am = deptId; else taken[idx].pm = deptId;
+    }
+    taken.forEach((t, i) => {
+      if (t.am) result.push(make(i, dow, 'am', t.am));
+      if (t.pm) result.push(make(i, dow, 'pm', t.pm));
+    });
+  }
+  return result;
+}
+
+export const DEMO_ALLOCATIONS: SlotAllocation[] = buildAllocations();
 
 // 診療科ごとの代表的な術式と所要時間（分）
 const PROCEDURES: Record<string, Array<[string, number]>> = {
@@ -81,6 +137,9 @@ const PROCEDURES: Record<string, Array<[string, number]>> = {
   eye:      [['水晶体再建術', 20], ['硝子体茎離断術', 60], ['緑内障手術', 50]],
   plastic:  [['皮弁形成術', 150], ['皮膚腫瘍摘出術', 50], ['眼瞼下垂手術', 70]],
   derma:    [['皮膚悪性腫瘍切除術', 70], ['植皮術', 90]],
+  cardio_int: [['ペースメーカー植込術', 90], ['カテーテルアブレーション', 180], ['経皮的左心耳閉鎖術', 90]],
+  dental:   [['埋伏歯抜歯術', 60], ['顎骨嚢胞摘出術', 90]],
+  anesth:   [['神経ブロック', 30], ['中心静脈ポート留置', 40]],
 };
 
 // 固定シード乱数（mulberry32）

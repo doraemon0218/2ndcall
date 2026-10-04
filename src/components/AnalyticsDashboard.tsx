@@ -9,6 +9,7 @@ import { useEventLog } from '@/hooks/useEventLog';
 
 export type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 export type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
+export type FreeCutoff = 60 | 90 | 120;
 
 interface Props {
   departments: Department[];
@@ -18,6 +19,8 @@ interface Props {
   updateCycle: UpdateCycle;
   onNotificationCadenceChange: (value: NotificationCadence) => void;
   onUpdateCycleChange: (value: UpdateCycle) => void;
+  freeCutoff: FreeCutoff;
+  onFreeCutoffChange: (value: FreeCutoff) => void;
   onOpenImport: () => void;
   onResetDemo: () => void;
   children?: React.ReactNode; // 稼働率などの既存集計
@@ -28,6 +31,12 @@ const CADENCE_OPTIONS: Array<{ value: NotificationCadence; label: string }> = [
   { value: '30m', label: '30分ごと' },
   { value: '1h', label: '1時間ごと' },
   { value: '6h', label: '6時間ごと' },
+];
+
+const CUTOFF_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '60', label: '1時間' },
+  { value: '90', label: '1.5時間' },
+  { value: '120', label: '2時間' },
 ];
 
 const CYCLE_OPTIONS: Array<{ value: UpdateCycle; label: string }> = [
@@ -77,7 +86,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
 
 export default function AnalyticsDashboard({
   departments, releasedSlots, queuedNotifications,
-  notificationCadence, updateCycle, onNotificationCadenceChange, onUpdateCycleChange, onOpenImport, onResetDemo, children,
+  notificationCadence, updateCycle, onNotificationCadenceChange, onUpdateCycleChange, freeCutoff, onFreeCutoffChange, onOpenImport, onResetDemo, children,
 }: Props) {
   const events = useEventLog();
   const [showLog, setShowLog] = useState(false);
@@ -266,7 +275,12 @@ export default function AnalyticsDashboard({
       {/* ── 運用設定 ── */}
       <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-bold text-gray-900">運用設定</h3>
-        <div className="mt-4 grid gap-5 md:grid-cols-2">
+        <div className="mt-4 grid gap-5 md:grid-cols-3">
+          <div>
+            <p className="text-sm font-bold text-gray-800">「一部空き」とみなす時間</p>
+            <p className="text-xs text-gray-500 mt-0.5 mb-2">予定の合間に、この時間以上の空きがある枠を「一部空き」と表示します。予定が1件もない枠は「空き」です。</p>
+            <Segmented value={String(freeCutoff)} options={CUTOFF_OPTIONS} onChange={v => onFreeCutoffChange(Number(v) as FreeCutoff)} />
+          </div>
           <div>
             <p className="text-sm font-bold text-gray-800">枠移動の通知タイミング</p>
             <p className="text-xs text-gray-500 mt-0.5 mb-2">承認した枠移動を、全診療科部長へまとめて知らせる間隔です。</p>

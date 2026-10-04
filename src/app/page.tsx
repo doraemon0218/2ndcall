@@ -27,6 +27,7 @@ type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'analytics';
 type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
+type FreeCutoff = 60 | 90 | 120;
 type DeptNotificationStatus = 'queued' | 'sent';
 
 interface DeptNotification {
@@ -65,6 +66,7 @@ export default function HomePage() {
   const [switchError, setSwitchError] = useState('');
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
   const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
+  const [freeCutoff, setFreeCutoff] = useState<FreeCutoff>(60);
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
 
   useEffect(() => {
@@ -108,6 +110,11 @@ export default function HomePage() {
     const savedCadence = localStorage.getItem('or_notification_cadence');
     if (savedCadence === 'instant' || savedCadence === '30m' || savedCadence === '1h' || savedCadence === '6h') {
       setNotificationCadence(savedCadence);
+    }
+
+    const savedCutoff = Number(localStorage.getItem('or_free_cutoff'));
+    if (savedCutoff === 60 || savedCutoff === 90 || savedCutoff === 120) {
+      setFreeCutoff(savedCutoff);
     }
 
     const savedCycle = localStorage.getItem('or_update_cycle');
@@ -192,6 +199,11 @@ export default function HomePage() {
   function handleNotificationCadenceChange(value: NotificationCadence) {
     setNotificationCadence(value);
     localStorage.setItem('or_notification_cadence', value);
+  }
+
+  function handleFreeCutoffChange(value: FreeCutoff) {
+    setFreeCutoff(value);
+    localStorage.setItem('or_free_cutoff', String(value));
   }
 
   function handleUpdateCycleChange(value: UpdateCycle) {
@@ -797,6 +809,7 @@ export default function HomePage() {
             departments={schedule.departments}
             rooms={schedule.rooms}
             onOpenBoard={() => setView('board')}
+            freeCutoffMinutes={freeCutoff}
           />
         )}
         {view === 'overview' && isManager && (
@@ -931,6 +944,8 @@ export default function HomePage() {
             updateCycle={updateCycle}
             onNotificationCadenceChange={handleNotificationCadenceChange}
             onUpdateCycleChange={handleUpdateCycleChange}
+            freeCutoff={freeCutoff}
+            onFreeCutoffChange={handleFreeCutoffChange}
             onOpenImport={() => setShowSurgeryImport(true)}
             onResetDemo={handleResetDemo}
           >

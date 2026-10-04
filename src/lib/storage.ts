@@ -1,7 +1,7 @@
 import { Department, OperatingRoom, SlotAllocation, Surgery, ReleasedSlot, SlotRequest } from './types';
 import { buildDemoDataset } from './demoData';
 
-const SCHEMA_VERSION = '6'; // 型変更・デモデータ更新のたびにインクリメント
+const SCHEMA_VERSION = '7'; // 型変更・デモデータ更新のたびにインクリメント
 const VERSION_KEY = 'or_schema_version';
 
 const KEYS = {

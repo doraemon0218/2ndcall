@@ -28,7 +28,9 @@ type Mapping = Record<FieldKey, number>;
 const DEPT_ALIASES: Record<string, string[]> = {
   general: ['外科', '消化器外科', '一般外科', '消化器・一般外科'],
   thoracic: ['呼吸器外科'],
-  ent: ['耳鼻咽喉科', '耳鼻科', '頭頸部外科'],
+  ent: ['耳鼻咽喉科', '耳鼻科', '頭頸部外科', '耳鼻咽喉科・頭頸部外科'],
+  cardio_int: ['循環器内科', '循環器科'],
+  anesth: ['麻酔科', '麻酔科診察'],
   eye: ['眼科'],
   breast: ['乳腺外科', '乳腺・内分泌外科'],
 };
@@ -132,6 +134,7 @@ export default function SurgeryImportModal({ departments, rooms, allocations, ex
   function matchDept(v: string): Department | undefined {
     const text = v.trim().replace(/\s/g, '');
     return departments.find(d => d.name === text)
+      ?? departments.find(d => d.shortName.replace(/\s/g, '') === text) // 院内略称（消化外・耳鼻頸など）
       ?? departments.find(d => DEPT_ALIASES[d.id]?.includes(text))
       ?? departments.find(d => text.includes(d.name) || d.name.includes(text));
   }
