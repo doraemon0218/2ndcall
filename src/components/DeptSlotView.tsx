@@ -51,6 +51,7 @@ export default function DeptSlotView({
 
   const [releaseForm, setReleaseForm] = useState<Record<string, ReleaseFormState>>({});
   const [releasing, setReleasing] = useState<string | null>(null);
+  const [showBooked, setShowBooked] = useState(false);
   const [requestForm, setRequestForm] = useState<Record<string, RequestFormState>>({});
   const [requesting, setRequesting] = useState<string | null>(null);
 
@@ -104,6 +105,11 @@ export default function DeptSlotView({
     .sort((a, b) => a.release.date.localeCompare(b.release.date));
 
   const ownKey = (alloc: SlotAllocation, dateStr: string) => `${alloc.id}-${dateStr}`;
+  // 予定のない枠・共有中の枠だけを常に表示し、予定が入っている枠は折りたたむ
+  const needsAttention = (s: typeof ownSlots[number]) => s.daySurgeries.length === 0 || !!s.released;
+  const attentionCount = ownSlots.filter(needsAttention).length;
+  const bookedCount = ownSlots.length - attentionCount;
+  const visibleOwnSlots = showBooked ? ownSlots : ownSlots.filter(needsAttention);
 
   return (
     <div className="space-y-5">
@@ -308,8 +314,8 @@ export default function DeptSlotView({
         <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
           <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: activeDeptColor }} />
           <div>
-            <h3 className="font-bold text-gray-900">{activeDept?.name ?? '—'} の保有枠（今後{NUM_WEEKS}週間）</h3>
-            <p className="text-xs text-gray-500 mt-0.5">使えない枠をクリックして全診療科に共有できます</p>
+            <h3 className="font-bold text-gray-900">{activeDept?.name ?? '—'} の枠（今後{NUM_WEEKS}週間）　予定なし <span className="text-orange-600">{attentionCount}</span>件</h3>
+            <p className="text-xs text-gray-500 mt-0.5">使わない枠は「枠を共有」を押すと、他の科に使ってもらえます</p>
           </div>
         </div>
 
@@ -317,7 +323,10 @@ export default function DeptSlotView({
           <div className="text-center py-10 text-gray-400 text-sm">この診療科の保有枠はありません</div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {ownSlots.map(({ alloc, date, dateStr, daySurgeries, released, requests, deadline, deadlinePassed }) => {
+            {visibleOwnSlots.length === 0 && (
+              <div className="px-5 py-6 text-center text-sm text-emerald-700 font-bold">✅ 予定のない枠はありません</div>
+            )}
+            {visibleOwnSlots.map(({ alloc, date, dateStr, daySurgeries, released, requests, deadline, deadlinePassed }) => {
               const key = ownKey(alloc, dateStr);
               const isEmpty = daySurgeries.length === 0;
               const isReleasing = releasing === key;
@@ -497,6 +506,15 @@ export default function DeptSlotView({
                 </div>
               );
             })}
+            {bookedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowBooked(v => !v)}
+                className="w-full px-5 py-3 text-sm font-bold text-blue-600 hover:bg-blue-50"
+              >
+                {showBooked ? '予定が入っている枠をたたむ ▲' : `予定が入っている枠 ${bookedCount}件も見る ▼`}
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -49,11 +49,22 @@ export function calcUsedMinutes(surgeries: Surgery[]): number {
 }
 
 // 申請締め切り: 翌週の空き枠に対する希望申請は「前週金曜 正午」まで
+// 当院の運用: 前週水曜に予定表作成 → 木曜午前に確定 → 木曜午後〜金曜に空き枠を埋める
+export const RECRUIT_OPEN = { dayOffset: -4, hour: 13 };  // 前週木曜 13:00
+export const RECRUIT_CLOSE = { dayOffset: -3, hour: 17 }; // 前週金曜 17:00
+
+function weekAnchor(targetDate: Date, anchor: { dayOffset: number; hour: number }): Date {
+  const d = addDays(startOfWeek(targetDate, { weekStartsOn: 1 }), anchor.dayOffset);
+  d.setHours(anchor.hour, 0, 0, 0);
+  return d;
+}
+
 export function getRequestDeadline(targetDate: Date): Date {
-  const targetWeekMonday = startOfWeek(targetDate, { weekStartsOn: 1 });
-  const deadline = addDays(targetWeekMonday, -3); // 前週金曜
-  deadline.setHours(12, 0, 0, 0);
-  return deadline;
+  return weekAnchor(targetDate, RECRUIT_CLOSE);
+}
+
+export function getRecruitOpen(targetDate: Date): Date {
+  return weekAnchor(targetDate, RECRUIT_OPEN);
 }
 
 export function isDeadlinePassed(targetDate: Date): boolean {
@@ -61,12 +72,16 @@ export function isDeadlinePassed(targetDate: Date): boolean {
 }
 
 export function isRequestOpen(targetDate: Date): boolean {
-  const today = new Date();
-  const targetWeekMonday = startOfWeek(targetDate, { weekStartsOn: 1 });
-  const scheduleFixed = addDays(targetWeekMonday, -5); // 前週水曜（予定確定日）
-  scheduleFixed.setHours(18, 0, 0, 0);
-  const deadline = getRequestDeadline(targetDate);
-  return isBefore(scheduleFixed, today) && isBefore(today, deadline);
+  const now = new Date();
+  return isBefore(getRecruitOpen(targetDate), now) && isBefore(now, getRequestDeadline(targetDate));
+}
+
+// 今まさに募集期間中の対象週（来週の月曜）。期間外なら null
+export function getActiveRecruitWeek(now: Date = new Date()): { weekStart: Date; opensAt: Date; closesAt: Date } | null {
+  const nextMonday = startOfWeek(addDays(now, 7), { weekStartsOn: 1 });
+  const opensAt = getRecruitOpen(nextMonday);
+  const closesAt = getRequestDeadline(nextMonday);
+  return isBefore(opensAt, now) && isBefore(now, closesAt) ? { weekStart: nextMonday, opensAt, closesAt } : null;
 }
 
 export function buildWeeklySlots(
@@ -127,6 +142,10 @@ export function getDeptBgStyle(color: string): string {
     'bg-pink-500':   '#ec4899',
     'bg-indigo-500': '#6366f1',
     'bg-teal-500':   '#14b8a6',
+    'bg-rose-500':   '#f43f5e',
+    'bg-orange-500': '#f97316',
+    'bg-cyan-500':   '#06b6d4',
+    'bg-lime-500':   '#84cc16',
   };
   return map[color] ?? '#6b7280';
 }

@@ -82,6 +82,21 @@ export function useSchedule() {
     });
   }, []);
 
+  // 予定表の取り込み：指定日の手術予定をすべて入れ替える（上書き）
+  const replaceSurgeriesForDates = useCallback((dates: string[], incoming: Omit<Surgery, 'id'>[]) => {
+    const dateSet = new Set(dates);
+    const replaced = latest.current.surgeries.filter(s => dateSet.has(s.date)).length;
+    logEvent('schedule_imported', {
+      dates: dates.length, firstDate: dates[0], lastDate: dates[dates.length - 1],
+      imported: incoming.length, replaced,
+    });
+    setSurgeries(prev => {
+      const next = [...prev.filter(s => !dateSet.has(s.date)), ...incoming.map(s => ({ ...s, id: generateId() }))];
+      storage.saveSurgeries(next);
+      return next;
+    });
+  }, []);
+
   const saveAllocations = useCallback((next: SlotAllocation[]) => {
     logEvent('allocations_updated', { count: next.length });
     setAllocations(next);
@@ -291,7 +306,7 @@ export function useSchedule() {
 
   return {
     departments, rooms, allocations, surgeries, releasedSlots, slotRequests, initialized,
-    addSurgery, updateSurgery, deleteSurgery,
+    addSurgery, updateSurgery, deleteSurgery, replaceSurgeriesForDates,
     saveAllocations, addAllocation, deleteAllocation,
     releaseSlot, claimSlot, cancelRelease,
     submitRequest, approveRequest, rejectRequest, cancelRequest,

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { format, addWeeks, getDay } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { SlotAllocation, Surgery, ReleasedSlot, SlotRequest, Department, OperatingRoom, PERIOD_HOURS, Period, getPeriodLabel } from '@/lib/types';
-import { getWeekDates, getOperatingWeekStart, toTimeMinutes, minutesToHHMM, getDeptBgStyle } from '@/lib/utils';
+import { getWeekDates, getOperatingWeekStart, getActiveRecruitWeek, toTimeMinutes, minutesToHHMM, getDeptBgStyle } from '@/lib/utils';
 
 interface Props {
   allocations: SlotAllocation[];
@@ -34,16 +34,17 @@ const WEEK_OPTIONS = [
   { offset: 2, label: '再来週' },
 ];
 
-const MIN_FREE_MINUTES = 30;
+const MIN_FREE_MINUTES = 60;  // 入替時間など短い隙間は空きとみなさない
+const AM_ENTRY_MINUTES = 8 * 60 + 45; // 午前の入室開始（8:45）より前は準備時間
 
 const STATUS_STYLE: Record<BandStatus, { box: string; badge: string; label: string }> = {
-  unassigned: { box: 'border-dashed border-gray-300 bg-gray-50', badge: 'bg-gray-200 text-gray-700', label: '未割当' },
-  unused:     { box: 'border-orange-300 bg-orange-50', badge: 'bg-orange-500 text-white', label: '未使用' },
+  unassigned: { box: 'border-dashed border-gray-300 bg-gray-50', badge: 'bg-gray-200 text-gray-700', label: '担当なし' },
+  unused:     { box: 'border-orange-300 bg-orange-50', badge: 'bg-orange-500 text-white', label: '空き' },
   partial:    { box: 'border-yellow-300 bg-yellow-50', badge: 'bg-yellow-400 text-yellow-900', label: '一部空き' },
-  full:       { box: 'border-green-200 bg-green-50', badge: 'bg-green-100 text-green-700', label: '埋まり' },
-  released:   { box: 'border-purple-300 bg-purple-50', badge: 'bg-purple-600 text-white', label: '共有中' },
-  pending:    { box: 'border-amber-300 bg-amber-50', badge: 'bg-amber-500 text-white', label: '承認待ち' },
-  moved:      { box: 'border-blue-200 bg-blue-50', badge: 'bg-blue-100 text-blue-700', label: '移動確定' },
+  full:       { box: 'border-green-200 bg-green-50', badge: 'bg-green-100 text-green-700', label: '予定あり' },
+  released:   { box: 'border-purple-300 bg-purple-50', badge: 'bg-purple-600 text-white', label: '募集中' },
+  pending:    { box: 'border-amber-300 bg-amber-50', badge: 'bg-amber-500 text-white', label: '申請あり' },
+  moved:      { box: 'border-blue-200 bg-blue-50', badge: 'bg-blue-100 text-blue-700', label: '他科へ移動' },
 };
 
 function subtractRanges(window: [number, number], busy: Array<[number, number]>): Array<[number, number]> {
@@ -62,14 +63,18 @@ function subtractRanges(window: [number, number], busy: Array<[number, number]>)
 }
 
 export default function ManagerWeekOverview({ allocations, surgeries, releasedSlots, slotRequests, departments, rooms, onOpenBoard }: Props) {
-  const [weekOffset, setWeekOffset] = useState(0);
+  // 募集期間（木曜午後〜金曜）は来週を最初に表示
+  const [weekOffset, setWeekOffset] = useState(() => (getActiveRecruitWeek() ? 1 : 0));
   const weekDates = getWeekDates(addWeeks(getOperatingWeekStart(), weekOffset));
 
   function buildBand(roomId: string, date: Date, period: Exclude<Period, 'full'>): Band {
     const dow = getDay(date) === 0 ? 7 : getDay(date);
     const dateStr = format(date, 'yyyy-MM-dd');
     const hours = PERIOD_HOURS[period];
-    const bandWindow: [number, number] = [hours.startHour * 60 + hours.startMin, hours.endHour * 60 + hours.endMin];
+    const bandWindow: [number, number] = [
+      Math.max(hours.startHour * 60 + hours.startMin, period === 'am' ? AM_ENTRY_MINUTES : 0),
+      hours.endHour * 60 + hours.endMin,
+    ];
 
     const alloc = allocations.find(a => a.roomId === roomId && a.dayOfWeek === dow && (a.period === period || a.period === 'full'));
     const window: [number, number] = alloc
@@ -127,7 +132,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
     <section className="mb-5 rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-blue-600">全体の空き状況</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-blue-600">空き状況</p>
           <h3 className="text-lg font-bold text-gray-900 mt-0.5">
             {format(weekDates[0], 'M/d', { locale: ja })}〜{format(weekDates[weekDates.length - 1], 'M/d', { locale: ja })} の手術室・時間帯別の空き
           </h3>
@@ -150,10 +155,10 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-2.5">
           <div className="text-[10px] font-bold text-blue-600">保有枠の空き時間</div>
           <div className="text-lg font-bold text-blue-700">{allocatedFreeHours}h</div>
-          <div className="text-[10px] text-gray-400">未割当の部屋 {unassignedHours}h は別</div>
+          <div className="text-[10px] text-gray-400">担当科なしの部屋 {unassignedHours}h は別</div>
         </div>
         <div className="rounded-xl border border-orange-100 bg-orange-50 p-2.5">
-          <div className="text-[10px] font-bold text-orange-600">未使用の枠</div>
+          <div className="text-[10px] font-bold text-orange-600">まるごと空いている枠</div>
           <div className="text-lg font-bold text-orange-700">{countOf('unused')}</div>
         </div>
         <div className="rounded-xl border border-yellow-100 bg-yellow-50 p-2.5">
@@ -161,7 +166,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
           <div className="text-lg font-bold text-yellow-700">{countOf('partial')}</div>
         </div>
         <div className="rounded-xl border border-purple-100 bg-purple-50 p-2.5">
-          <div className="text-[10px] font-bold text-purple-600">共有中</div>
+          <div className="text-[10px] font-bold text-purple-600">他科に募集中</div>
           <div className="text-lg font-bold text-purple-700">{countOf('released')}</div>
         </div>
         <button
@@ -169,7 +174,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
           onClick={onOpenBoard}
           className="text-left rounded-xl border border-amber-200 bg-amber-50 p-2.5 hover:bg-amber-100 transition-colors"
         >
-          <div className="text-[10px] font-bold text-amber-600">承認待ち</div>
+          <div className="text-[10px] font-bold text-amber-600">申請あり（承認待ち）</div>
           <div className="text-lg font-bold text-amber-700">{countOf('pending')}</div>
         </button>
       </div>
@@ -198,7 +203,7 @@ export default function ManagerWeekOverview({ allocations, surgeries, releasedSl
                     <div className="space-y-1">
                       {bands.every(b => b.status === 'unassigned') ? (
                         <div className="rounded-lg border border-dashed border-gray-200 px-2 py-3 text-center text-[11px] text-gray-400">
-                          未割当（終日空き）
+                          担当科なし（終日空き）
                         </div>
                       ) : bands.map(band => {
                         const style = STATUS_STYLE[band.status];

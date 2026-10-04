@@ -14,8 +14,14 @@ import AllocationMasterModal from '@/components/AllocationMasterModal';
 import DeptSlotView from '@/components/DeptSlotView';
 import ManagerWeekOverview from '@/components/ManagerWeekOverview';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
+import ContributionBoard from '@/components/ContributionBoard';
+import RecruitBanner from '@/components/RecruitBanner';
+import SurgeryImportModal from '@/components/SurgeryImportModal';
+import { useEventLog } from '@/hooks/useEventLog';
+import { computeContributions, rankOf } from '@/lib/contribution';
+import { writeDemoDataset } from '@/lib/storage';
 import { logEvent, setActor } from '@/lib/eventLog';
-import { generateId, getOperatingWeekStart } from '@/lib/utils';
+import { generateId, getOperatingWeekStart, getActiveRecruitWeek } from '@/lib/utils';
 
 type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'analytics';
 type UserRole = 'manager' | 'dept';
@@ -41,6 +47,9 @@ export default function HomePage() {
   const [view, setView] = useState<View>('board');
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showSurgeryImport, setShowSurgeryImport] = useState(false);
+  const [toast, setToast] = useState('');
+  const events = useEventLog();
   const [showMasterModal, setShowMasterModal] = useState(false);
 
   // ログイン中の立場（デモ用）
@@ -57,6 +66,12 @@ export default function HomePage() {
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
   const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(''), 3500);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     const raw = localStorage.getItem('or_absences');
@@ -443,6 +458,39 @@ export default function HomePage() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 3);
 
+  // 募集期間の対象週（期間外は次の週）で、まだ埋まっていない共有枠
+  const recruitWeek = getActiveRecruitWeek()?.weekStart ?? getOperatingWeekStart();
+  const recruitWeekEnd = format(new Date(recruitWeek.getTime() + 6 * 86400000), 'yyyy-MM-dd');
+  const recruitWeekStartStr = format(recruitWeek, 'yyyy-MM-dd');
+  const recruitOpenSlots = schedule.releasedSlots.filter(r => !r.claimedByDeptId && r.date >= recruitWeekStartStr && r.date <= recruitWeekEnd);
+  const contributions = computeContributions(schedule.departments, events);
+  const myContribution = contributions.find(c => c.dept.id === activeDeptId);
+  const myRank = rankOf(contributions.filter(c => c.score > 0), activeDeptId);
+
+  function approveWithToast(requestId: string) {
+    const req = schedule.slotRequests.find(r => r.id === requestId);
+    handleApproveRequest(requestId);
+    if (req) setToast(`✅ 承認しました：${req.requestingDeptName} がこの枠を使います（各科に通知されます）`);
+  }
+
+  function rejectWithToast(requestId: string) {
+    const req = schedule.slotRequests.find(r => r.id === requestId);
+    schedule.rejectRequest(requestId);
+    if (req) setToast(`却下しました：${req.requestingDeptName} の申請`);
+  }
+
+  function claimWithToast(releaseId: string, deptId: string, deptName: string) {
+    handleClaimSlot(releaseId, deptId, deptName);
+    setToast(isManager ? `✅ ${deptName} に割り当てました` : '📨 申請しました。手術室の管理者が承認すると確定します');
+  }
+
+  function handleResetDemo() {
+    if (!window.confirm('デモデータに戻します。取り込んだ予定や操作の記録は消えます。よろしいですか？')) return;
+    writeDemoDataset();
+    logEvent('demo_reset');
+    window.location.reload();
+  }
+
   function handleLogout() {
     logEvent('logout');
     setIsLoggedIn(false);
@@ -508,14 +556,14 @@ export default function HomePage() {
 
   const tabs: Array<{ id: View; label: string; badge?: number; badgeTone?: 'amber' | 'red' }> = isManager
     ? [
-        { id: 'overview', label: '全体の空き状況' },
-        { id: 'board', label: '承認・空き枠', badge: pendingApprovalCount, badgeTone: 'amber' },
-        { id: 'schedule', label: '週次グリッド' },
-        { id: 'analytics', label: '分析' },
+        { id: 'overview', label: '🏠 空き状況' },
+        { id: 'board', label: '✅ 申請の承認', badge: pendingApprovalCount, badgeTone: 'amber' },
+        { id: 'schedule', label: '📅 予定表' },
+        { id: 'analytics', label: '📊 集計' },
       ]
     : [
-        { id: 'myslots', label: '自科の枠', badge: myPendingRequests, badgeTone: 'amber' },
-        { id: 'schedule', label: '週次グリッド' },
+        { id: 'myslots', label: '🏠 自分の科', badge: myPendingRequests, badgeTone: 'amber' },
+        { id: 'schedule', label: '📅 予定表' },
       ];
 
   return (
@@ -586,7 +634,7 @@ export default function HomePage() {
               <button
                 key={tab.id}
                 onClick={() => setView(tab.id)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 ${view === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-4 py-2 text-base font-bold rounded-md transition-colors flex items-center gap-1.5 ${view === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {tab.label}
                 {!!tab.badge && (
@@ -613,16 +661,16 @@ export default function HomePage() {
             {isManager && (
               <>
                 <button
-                  onClick={() => setShowMasterModal(true)}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
+                  onClick={() => setShowSurgeryImport(true)}
+                  className="px-4 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
                 >
-                  ⚙ 枠マスタ
+                  📥 予定表を取り込む
                 </button>
                 <button
-                  onClick={() => setShowImportModal(true)}
-                  className="hidden sm:block px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg border border-green-200"
+                  onClick={() => setShowMasterModal(true)}
+                  className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
                 >
-                  📊 一括インポート
+                  ⚙ 枠の設定
                 </button>
               </>
             )}
@@ -645,13 +693,19 @@ export default function HomePage() {
 
       {/* ── Main ── */}
       <main className="max-w-screen-2xl mx-auto px-4 py-5">
+        <RecruitBanner
+          openSlotCount={recruitOpenSlots.length}
+          onShow={() => setView(isManager ? 'overview' : 'myslots')}
+          actionLabel={isManager ? '空き状況を見る' : '空き枠を見る'}
+        />
+
         {/* ── 管理者: 承認待ちをどの画面からでもワンクリックで処理 ── */}
         {isManager && pendingApprovalCount > 0 && view !== 'board' && (
           <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <h3 className="text-sm font-bold text-amber-900">承認待ちの申請 {pendingApprovalCount}件</h3>
-              <button type="button" onClick={() => setView('board')} className="text-xs font-bold text-amber-700 hover:underline">
-                空き枠と並べて確認 →
+              <h3 className="text-lg font-bold text-amber-900">👉 今やること：申請が {pendingApprovalCount}件 届いています</h3>
+              <button type="button" onClick={() => setView('board')} className="text-sm font-bold text-amber-700 hover:underline">
+                くわしく見る →
               </button>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -661,18 +715,19 @@ export default function HomePage() {
                 return (
                   <div key={req.id} className="flex items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-800 truncate">{release?.ownerDeptName ?? '—'} → {req.requestingDeptName}</p>
+                      <p className="text-base font-bold text-gray-800 truncate">{req.requestingDeptName} が使いたい</p>
+                      <p className="text-xs text-gray-500">元は {release?.ownerDeptName ?? '—'} の枠</p>
                       <p className="text-[11px] text-gray-500">
                         {format(new Date(`${req.date}T00:00:00`), 'M/d(E)', { locale: ja })} · 手術室{req.roomId.replace('or', '')} · {req.wantedStartTime}–{req.wantedEndTime}
-                        {competing > 1 && <span className="ml-1 font-bold text-red-600">競合{competing}科</span>}
+                        {competing > 1 && <span className="ml-1 font-bold text-red-600">（{competing}科が希望・1科を選ぶ）</span>}
                       </p>
                     </div>
                     <div className="flex gap-1.5 flex-shrink-0">
-                      <button type="button" onClick={() => handleApproveRequest(req.id)} className="px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg">
-                        承認
+                      <button type="button" onClick={() => approveWithToast(req.id)} className="px-4 py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg">
+                        ⭕ 承認
                       </button>
-                      <button type="button" onClick={() => schedule.rejectRequest(req.id)} className="px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200">
-                        却下
+                      <button type="button" onClick={() => rejectWithToast(req.id)} className="px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200">
+                        ✕ 却下
                       </button>
                     </div>
                   </div>
@@ -680,6 +735,12 @@ export default function HomePage() {
               })}
             </div>
           </section>
+        )}
+
+        {isManager && pendingApprovalCount === 0 && view === 'overview' && (
+          <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-base font-bold text-emerald-800">
+            ✅ いま承認が必要な申請はありません
+          </div>
         )}
 
         {/* ── 部長: 自科サマリーと通知 ── */}
@@ -702,6 +763,11 @@ export default function HomePage() {
                 <div className="text-[11px] text-cyan-600 font-bold">他科から獲得</div>
                 <div className="mt-1 text-2xl font-bold text-cyan-700">{acquiredFromOtherDepts}</div>
               </div>
+              {myContribution && myContribution.score > 0 && (
+                <div className="col-span-2 md:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  🏆 最近30日で <b>{myContribution.filled}枠</b> を埋め、<b>{myContribution.shared}枠</b> を早めに共有しました（全科で <b>{myRank}位</b>）。ご協力ありがとうございます。
+                </div>
+              )}
             </div>
             <div className="rounded-xl border border-indigo-100 bg-white p-3 shadow-sm">
               <p className="text-[11px] font-bold text-indigo-600 mb-1.5">{activeDept?.name ?? '自科'}へのお知らせ</p>
@@ -733,6 +799,9 @@ export default function HomePage() {
             onOpenBoard={() => setView('board')}
           />
         )}
+        {view === 'overview' && isManager && (
+          <ContributionBoard departments={schedule.departments} />
+        )}
 
         {/* ── 部長: 自科の枠 ── */}
         {view === 'myslots' && !isManager && (
@@ -746,11 +815,22 @@ export default function HomePage() {
             slotRequests={schedule.slotRequests}
             onReleaseSlot={schedule.releaseSlot}
             onCancelRelease={schedule.cancelRelease}
-            onSubmitRequest={schedule.submitRequest}
+            onSubmitRequest={req => {
+              schedule.submitRequest(req);
+              setToast('📨 申請しました。手術室の管理者が承認すると確定します');
+            }}
             onApproveRequest={handleApproveRequest}
             onRejectRequest={schedule.rejectRequest}
-            onCancelRequest={schedule.cancelRequest}
+            onCancelRequest={id => {
+              schedule.cancelRequest(id);
+              setToast('申請を取り消しました');
+            }}
           />
+        )}
+        {view === 'myslots' && !isManager && (
+          <div className="mt-5">
+            <ContributionBoard departments={schedule.departments} highlightDeptId={activeDeptId} />
+          </div>
         )}
 
         {/* ── 週次グリッド ── */}
@@ -769,7 +849,7 @@ export default function HomePage() {
             onDeleteSurgery={schedule.deleteSurgery}
             onReleaseSlot={schedule.releaseSlot}
             slotRequests={schedule.slotRequests}
-            onClaimSlot={handleClaimSlot}
+            onClaimSlot={claimWithToast}
             onCancelRelease={schedule.cancelRelease}
           />
         )}
@@ -788,10 +868,10 @@ export default function HomePage() {
               currentDeptId={activeDeptId}
               notificationCadence={notificationCadence}
               slotRequests={schedule.slotRequests}
-              onClaim={handleClaimSlot}
+              onClaim={claimWithToast}
               onCancelRelease={schedule.cancelRelease}
-              onApproveRequest={handleApproveRequest}
-              onRejectRequest={schedule.rejectRequest}
+              onApproveRequest={approveWithToast}
+              onRejectRequest={rejectWithToast}
             />
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -799,12 +879,20 @@ export default function HomePage() {
                   <h3 className="font-bold text-gray-900">登録済み不在・学会</h3>
                   <p className="text-xs text-gray-500 mt-0.5">登録すると該当する枠が自動で共有されます</p>
                 </div>
-                <button
-                  onClick={() => setShowAbsenceModal(true)}
-                  className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors"
-                >
-                  ＋ 追加
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowImportModal(true)}
+                    className="px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-50 rounded-lg border border-green-200 transition-colors"
+                  >
+                    まとめて登録
+                  </button>
+                  <button
+                    onClick={() => setShowAbsenceModal(true)}
+                    className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors"
+                  >
+                    ＋ 追加
+                  </button>
+                </div>
               </div>
               <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
                 {absences.length === 0 ? (
@@ -843,7 +931,10 @@ export default function HomePage() {
             updateCycle={updateCycle}
             onNotificationCadenceChange={handleNotificationCadenceChange}
             onUpdateCycleChange={handleUpdateCycleChange}
+            onOpenImport={() => setShowSurgeryImport(true)}
+            onResetDemo={handleResetDemo}
           >
+            <ContributionBoard departments={schedule.departments} limit={12} />
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-base font-bold text-gray-900">稼働率（{format(weekStart, 'M/d', { locale: ja })} 週）</h3>
@@ -888,6 +979,24 @@ export default function HomePage() {
           onImport={importAbsences}
           onClose={() => setShowImportModal(false)}
         />
+      )}
+      {showSurgeryImport && isManager && (
+        <SurgeryImportModal
+          departments={schedule.departments}
+          rooms={schedule.rooms}
+          allocations={schedule.allocations}
+          existingSurgeries={schedule.surgeries}
+          onImport={(dates, items) => {
+            schedule.replaceSurgeriesForDates(dates, items);
+            setToast(`✅ 予定表を取り込みました（${items.length}件・${dates.length}日分）`);
+          }}
+          onClose={() => setShowSurgeryImport(false)}
+        />
+      )}
+      {toast && (
+        <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-gray-900 px-6 py-4 text-base font-bold text-white shadow-2xl">
+          {toast}
+        </div>
       )}
       {showMasterModal && isManager && (
         <AllocationMasterModal

@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { Department, ReleasedSlot } from '@/lib/types';
-import { AppEvent, EVENT_LABELS, getEvents, eventsToCsv } from '@/lib/eventLog';
+import { AppEvent, EVENT_LABELS, eventsToCsv } from '@/lib/eventLog';
+import { useEventLog } from '@/hooks/useEventLog';
 
 export type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 export type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
@@ -17,6 +18,8 @@ interface Props {
   updateCycle: UpdateCycle;
   onNotificationCadenceChange: (value: NotificationCadence) => void;
   onUpdateCycleChange: (value: UpdateCycle) => void;
+  onOpenImport: () => void;
+  onResetDemo: () => void;
   children?: React.ReactNode; // 稼働率などの既存集計
 }
 
@@ -32,17 +35,6 @@ const CYCLE_OPTIONS: Array<{ value: UpdateCycle; label: string }> = [
   { value: 'halfyearly', label: '6か月' },
   { value: 'annual', label: '1年' },
 ];
-
-function useEventLog(): AppEvent[] {
-  const [events, setEvents] = useState<AppEvent[]>([]);
-  useEffect(() => {
-    const refresh = () => setEvents(getEvents());
-    refresh();
-    window.addEventListener('or-event-logged', refresh);
-    return () => window.removeEventListener('or-event-logged', refresh);
-  }, []);
-  return events;
-}
 
 function average(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -85,7 +77,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
 
 export default function AnalyticsDashboard({
   departments, releasedSlots, queuedNotifications,
-  notificationCadence, updateCycle, onNotificationCadenceChange, onUpdateCycleChange, children,
+  notificationCadence, updateCycle, onNotificationCadenceChange, onUpdateCycleChange, onOpenImport, onResetDemo, children,
 }: Props) {
   const events = useEventLog();
   const [showLog, setShowLog] = useState(false);
@@ -132,7 +124,7 @@ export default function AnalyticsDashboard({
 
   const kpis = [
     { label: '共有された枠', value: `${released.length}`, sub: 'これまでの累計' },
-    { label: '移動確定', value: `${moved}`, sub: `承認 ${approved.length} / 管理者割当 ${assigned.length}` },
+    { label: '空き枠を埋めた', value: `${moved}`, sub: `＝追加で受け入れた手術（入院）の見込み` },
     { label: '使われず取消', value: `${cancelledUnused.length}`, sub: '共有後に取り下げ' },
     { label: '承認率', value: approvalRate === null ? '—' : `${approvalRate}%`, sub: `却下 ${rejectedByManager.length}件` },
     { label: '承認までの平均', value: formatMinutes(avgDecision), sub: '申請 → 判断' },
@@ -146,7 +138,7 @@ export default function AnalyticsDashboard({
       <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
-            <h3 className="text-base font-bold text-gray-900">枠共有の分析</h3>
+            <h3 className="text-base font-bold text-gray-900">空き枠の活用</h3>
             <p className="text-xs text-gray-500 mt-0.5">操作履歴 {events.length}件から集計（このブラウザに蓄積。取消・却下も含む）</p>
           </div>
           <div className="flex gap-2">
@@ -291,6 +283,19 @@ export default function AnalyticsDashboard({
         </div>
       </section>
 
+      {/* ── データ管理 ── */}
+      <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <h3 className="text-base font-bold text-gray-900">データ管理</h3>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <button type="button" onClick={onOpenImport} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
+            📥 予定表を取り込む（同じ日付は上書き）
+          </button>
+          <button type="button" onClick={onResetDemo} className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+            ↺ デモデータに戻す
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-gray-500">今はデモ用の予定が入っています。電子カルテの予定表を取り込むと、その日付の予定だけが置き換わります。</p>
+      </section>
     </div>
   );
 }

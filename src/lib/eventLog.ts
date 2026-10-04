@@ -20,7 +20,9 @@ export type EventType =
   | 'surgery_deleted'
   | 'allocations_updated'
   | 'absence_registered'
-  | 'absence_deleted';
+  | 'absence_deleted'
+  | 'schedule_imported'
+  | 'demo_reset';
 
 export const EVENT_LABELS: Record<EventType, string> = {
   login: 'ログイン',
@@ -41,6 +43,8 @@ export const EVENT_LABELS: Record<EventType, string> = {
   allocations_updated: '枠マスタ更新',
   absence_registered: '不在を登録',
   absence_deleted: '不在を削除',
+  schedule_imported: '予定表を取り込み',
+  demo_reset: 'デモデータに戻す',
 };
 
 export interface Actor {
