@@ -123,6 +123,9 @@ function buildAllocations(): SlotAllocation[] {
 
 export const DEMO_ALLOCATIONS: SlotAllocation[] = buildAllocations();
 
+// 枠を持つ科（デモの申請・移動の相手はこの中から選ぶ）
+const hasSlots = (deptId: string) => (WEEKLY_UNITS[deptId] ?? []).some(u => u > 0) && deptId !== 'anesth';
+
 // 診療科ごとの代表的な術式と所要時間（分）
 const PROCEDURES: Record<string, Array<[string, number]>> = {
   general:  [['腹腔鏡下胆嚢摘出術', 90], ['腹腔鏡下結腸切除術', 210], ['鼠径ヘルニア修復術', 70], ['胃切除術', 240], ['虫垂切除術', 60]],
@@ -283,7 +286,7 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
     });
   }
   const otherDept = (excludeId: string, offset: number) => {
-    const list = DEMO_DEPARTMENTS.filter(d => d.id !== excludeId);
+    const list = DEMO_DEPARTMENTS.filter(d => d.id !== excludeId && hasSlots(d.id));
     return list[offset % list.length];
   };
   const addRequest = (release: ReleasedSlot, dept: Department, id: string, minutesAgo: number, status: SlotRequest['status'] = 'pending') => {
@@ -365,7 +368,7 @@ function buildDemoEvents(today: Date): AppEvent[] {
     }
     if (outcome < 0.22) continue; // 共有したが誰も申請せず期限切れ
 
-    const requesters = DEMO_DEPARTMENTS.filter(d => d.id !== owner.id).sort(() => r() - 0.5).slice(0, r() < 0.3 ? 2 : 1);
+    const requesters = DEMO_DEPARTMENTS.filter(d => d.id !== owner.id && hasSlots(d.id)).sort(() => r() - 0.5).slice(0, r() < 0.3 ? 2 : 1);
     const reqs = requesters.map((dept, k) => {
       const minutesSinceRelease = 30 + Math.floor(r() * 60 * 20) + k * 45;
       const at = new Date(releasedAt.getTime() + minutesSinceRelease * 60000);

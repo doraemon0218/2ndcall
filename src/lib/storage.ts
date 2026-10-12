@@ -1,5 +1,7 @@
 import { Department, OperatingRoom, SlotAllocation, Surgery, ReleasedSlot, SlotRequest } from './types';
+import { format } from 'date-fns';
 import { buildDemoDataset } from './demoData';
+import { getOperatingWeekStart } from './utils';
 
 const SCHEMA_VERSION = '7'; // 型変更・デモデータ更新のたびにインクリメント
 const VERSION_KEY = 'or_schema_version';
@@ -17,6 +19,14 @@ const KEYS = {
 const ABSENCES_KEY = 'or_absences';
 const EVENT_LOG_KEY = 'or_event_log';
 const NOTIFICATIONS_KEY = 'or_dept_notifications';
+const DEMO_WEEK_KEY = 'or_demo_week';     // デモデータを作った週（月曜の日付）
+const HAS_IMPORT_KEY = 'or_has_import';   // 予定表を取り込んだら '1'（以後デモの自動作り直しをしない）
+
+const currentWeek = () => format(getOperatingWeekStart(), 'yyyy-MM-dd');
+
+export function markScheduleImported() {
+  if (typeof window !== 'undefined') localStorage.setItem(HAS_IMPORT_KEY, '1');
+}
 
 // デモデータ一式を書き込む（初回・スキーマ更新時・「デモデータに戻す」）
 export function writeDemoDataset() {
@@ -31,13 +41,18 @@ export function writeDemoDataset() {
   localStorage.setItem(ABSENCES_KEY, JSON.stringify(demo.absences));
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(demo.events));
   localStorage.setItem(NOTIFICATIONS_KEY, '[]');
+  localStorage.setItem(DEMO_WEEK_KEY, currentWeek());
+  localStorage.removeItem(HAS_IMPORT_KEY);
   localStorage.setItem(VERSION_KEY, SCHEMA_VERSION);
 }
 
-// スキーマバージョンが変わった場合はデモデータで初期化
+// スキーマ更新時、または予定表を取り込んでいないまま週が変わったときはデモデータを作り直す
+let migrated = false;
 function migrateIfNeeded() {
-  if (typeof window === 'undefined') return;
-  if (localStorage.getItem(VERSION_KEY) !== SCHEMA_VERSION) {
+  if (typeof window === 'undefined' || migrated) return;
+  migrated = true;
+  const outdatedDemo = !localStorage.getItem(HAS_IMPORT_KEY) && localStorage.getItem(DEMO_WEEK_KEY) !== currentWeek();
+  if (localStorage.getItem(VERSION_KEY) !== SCHEMA_VERSION || outdatedDemo) {
     writeDemoDataset();
   }
 }

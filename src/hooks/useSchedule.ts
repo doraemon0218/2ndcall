@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Department, OperatingRoom, SlotAllocation, Surgery, ReleasedSlot, SlotRequest } from '@/lib/types';
-import { storage } from '@/lib/storage';
+import { storage, markScheduleImported } from '@/lib/storage';
 import { generateId } from '@/lib/utils';
 import { logEvent } from '@/lib/eventLog';
 
@@ -90,6 +90,7 @@ export function useSchedule() {
       dates: dates.length, firstDate: dates[0], lastDate: dates[dates.length - 1],
       imported: incoming.length, replaced,
     });
+    markScheduleImported();
     setSurgeries(prev => {
       const next = [...prev.filter(s => !dateSet.has(s.date)), ...incoming.map(s => ({ ...s, id: generateId() }))];
       storage.saveSurgeries(next);

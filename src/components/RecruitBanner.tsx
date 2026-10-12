@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { getActiveRecruitWeek, getRecruitOpen } from '@/lib/utils';
+import { getActiveRecruitWeek, getRecruitOpen, getNow } from '@/lib/utils';
 
 interface Props {
   openSlotCount: number; // 来週の共有中（まだ埋まっていない）枠数
@@ -19,9 +19,9 @@ function remaining(ms: number): string {
 
 // 木曜午後〜金曜の「来週の空き枠を埋める時間」を知らせる帯
 export default function RecruitBanner({ openSlotCount, onShow, actionLabel = '空き枠を見る' }: Props) {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState(() => getNow());
   useEffect(() => {
-    const t = window.setInterval(() => setNow(new Date()), 60000);
+    const t = window.setInterval(() => setNow(getNow()), 60000);
     return () => window.clearInterval(t);
   }, []);
 

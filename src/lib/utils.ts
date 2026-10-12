@@ -77,7 +77,17 @@ export function isRequestOpen(targetDate: Date): boolean {
 }
 
 // 今まさに募集期間中の対象週（来週の月曜）。期間外なら null
-export function getActiveRecruitWeek(now: Date = new Date()): { weekStart: Date; opensAt: Date; closesAt: Date } | null {
+// デモ用：URL に ?demo=recruit を付けると「今週木曜 15:00」として募集期間の画面を見せる
+export function getNow(): Date {
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === 'recruit') {
+    const thu = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 3);
+    thu.setHours(15, 0, 0, 0);
+    return thu;
+  }
+  return new Date();
+}
+
+export function getActiveRecruitWeek(now: Date = getNow()): { weekStart: Date; opensAt: Date; closesAt: Date } | null {
   const nextMonday = startOfWeek(addDays(now, 7), { weekStartsOn: 1 });
   const opensAt = getRecruitOpen(nextMonday);
   const closesAt = getRequestDeadline(nextMonday);
