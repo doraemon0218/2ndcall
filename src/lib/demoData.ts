@@ -173,6 +173,7 @@ export interface DemoDataset {
   slotRequests: SlotRequest[];
   absences: Array<{ id: string; deptId: string; deptName: string; personName: string; reason: string; reasonType?: 'positive' | 'negative' | 'neutral'; startDate: string; endDate: string; notes: string; createdAt: string }>;
   events: AppEvent[];
+  notifications: Array<{ id: string; deptId: string; deptName: string; title: string; body: string; createdAt: string; scheduledAt: string; status: 'queued' | 'sent' }>;
 }
 
 type Fill = 'full' | 'partial' | 'empty';
@@ -374,6 +375,19 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
     slotRequests,
     absences,
     events: buildDemoEvents(today),
+    // 承認済みの移譲ごとに、全診療科部長へ送った通知の記録
+    notifications: releasedSlots.filter(r => r.claimedByDeptId && r.claimedAt).flatMap(r =>
+      DEMO_DEPARTMENTS.map(d => ({
+        id: `demo-n-${r.id}-${d.id}`,
+        deptId: d.id,
+        deptName: d.name,
+        title: '枠移動が承認されました',
+        body: `${r.date} 手術室${r.roomId.replace('or', '')} ${r.startHour}:00–${r.endHour}:00 の枠が、${r.ownerDeptName}から${r.claimedByDeptName}に承認されました。`,
+        createdAt: r.claimedAt!,
+        scheduledAt: r.claimedAt!,
+        status: 'sent' as const,
+      })),
+    ),
   };
 }
 

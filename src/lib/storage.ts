@@ -3,7 +3,7 @@ import { format } from 'date-fns';
 import { buildDemoDataset } from './demoData';
 import { getOperatingWeekStart } from './utils';
 
-const SCHEMA_VERSION = '8'; // 型変更・デモデータ更新のたびにインクリメント
+const SCHEMA_VERSION = '9'; // 型変更・デモデータ更新のたびにインクリメント
 const VERSION_KEY = 'or_schema_version';
 
 const KEYS = {
@@ -40,7 +40,7 @@ export function writeDemoDataset() {
   localStorage.setItem(KEYS.slotRequests, JSON.stringify(demo.slotRequests));
   localStorage.setItem(ABSENCES_KEY, JSON.stringify(demo.absences));
   localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(demo.events));
-  localStorage.setItem(NOTIFICATIONS_KEY, '[]');
+  localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(demo.notifications));
   localStorage.setItem(DEMO_WEEK_KEY, currentWeek());
   localStorage.removeItem(HAS_IMPORT_KEY);
   localStorage.removeItem('or_setup_confirmed'); // デモでは初期設定から見せる

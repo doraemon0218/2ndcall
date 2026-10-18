@@ -11,6 +11,7 @@ interface Props {
   confirmed: boolean;
   onSave: (next: SlotAllocation[]) => void;
   onClose: () => void;
+  inline?: boolean; // タブ内にそのまま表示（ポップアップにしない）
 }
 
 const DAYS = [
@@ -54,7 +55,7 @@ function fromGrid(grid: Grid, rooms: OperatingRoom[], departments: Department[])
 const roomNo = (roomId: string) => Number(roomId.replace('or', ''));
 const fmtUnits = (n: number) => (n === 0 ? '' : Number.isInteger(n) ? String(n) : n.toFixed(1));
 
-export default function SlotSetupWizard({ allocations, departments, rooms, confirmed, onSave, onClose }: Props) {
+export default function SlotSetupWizard({ allocations, departments, rooms, confirmed, onSave, onClose, inline = false }: Props) {
   const [grid, setGrid] = useState<Grid>(() => toGrid(allocations, rooms));
   const [dow, setDow] = useState(1);
   const [summaryTab, setSummaryTab] = useState<'day' | 'dept' | 'table'>('table');
@@ -125,17 +126,23 @@ export default function SlotSetupWizard({ allocations, departments, rooms, confi
   const dayLabel = DAYS.find(d => d.dow === dow)?.label;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-4">
-      <div className="w-full max-w-7xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div className={inline ? '' : 'fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-4'}>
+      <div className={inline ? 'bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden' : 'w-full max-w-7xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden'}>
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">⚙ 手術枠の初期設定</h2>
+            <h2 className="text-xl font-bold text-gray-900">① 枠の所有者</h2>
             <p className="text-sm text-gray-500 mt-0.5">どの診療科が、どの曜日の、どの部屋・時間帯の枠を持っているかを登録します</p>
           </div>
-          <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-800">閉じる ✕</button>
+          {inline ? (
+            <span className={`rounded-full px-3 py-1 text-sm font-bold ${confirmed ? 'bg-[#E9EDF2] text-[#1B3A5C]' : 'bg-[#FDF3EA] text-[#C2610F]'}`}>
+              {confirmed ? '確定済み' : '未確定'}
+            </span>
+          ) : (
+            <button type="button" onClick={onClose} className="text-sm text-gray-500 hover:text-gray-800">閉じる ✕</button>
+          )}
         </div>
 
-        <div className="flex-1 overflow-hidden grid lg:grid-cols-[1.1fr_1fr]">
+        <div className={`grid lg:grid-cols-[1.1fr_1fr] ${inline ? '' : 'flex-1 overflow-hidden'}`}>
           {/* ── 入力 ── */}
           <div className="overflow-y-auto p-6 border-r border-gray-100">
             <p className="text-sm font-bold text-gray-800 mb-2">① 曜日を選んで、部屋ごとに診療科を選ぶ</p>
@@ -271,9 +278,11 @@ export default function SlotSetupWizard({ allocations, departments, rooms, confi
 
         <div className="px-6 py-4 border-t border-gray-100 flex items-center gap-3">
           <p className="flex-1 text-sm text-gray-500">{confirmed ? 'この枠表は確定済みです。変更すると、今後の空き状況の判定に使われます。' : '確定すると、この枠表をもとに空き状況を判定します。'}</p>
-          <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 px-5 py-3 text-base text-gray-600 hover:bg-gray-50">
-            あとで
-          </button>
+          {!inline && (
+            <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 px-5 py-3 text-base text-gray-600 hover:bg-gray-50">
+              あとで
+            </button>
+          )}
           <button
             type="button"
             onClick={() => { onSave(fromGrid(grid, rooms, departments)); onClose(); }}

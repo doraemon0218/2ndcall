@@ -7,7 +7,7 @@ import { useSchedule } from '@/hooks/useSchedule';
 import WeeklySchedule from '@/components/WeeklySchedule';
 import StatsBar from '@/components/StatsBar';
 import DeptRanking from '@/components/DeptRanking';
-import OpenSlotBoard from '@/components/OpenSlotBoard';
+import OpenReleasesList from '@/components/OpenReleasesList';
 import AbsenceModal, { Absence } from '@/components/AbsenceModal';
 import AbsenceImportModal from '@/components/AbsenceImportModal';
 import SlotSetupWizard from '@/components/SlotSetupWizard';
@@ -16,6 +16,7 @@ import ManagerWeekOverview from '@/components/ManagerWeekOverview';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import ContributionBoard from '@/components/ContributionBoard';
 import TransferLedger from '@/components/TransferLedger';
+import NotificationPanel from '@/components/NotificationPanel';
 import RecruitBanner from '@/components/RecruitBanner';
 import SurgeryImportModal from '@/components/SurgeryImportModal';
 import { useEventLog } from '@/hooks/useEventLog';
@@ -24,7 +25,7 @@ import { writeDemoDataset } from '@/lib/storage';
 import { logEvent, setActor } from '@/lib/eventLog';
 import { generateId, getOperatingWeekStart, getActiveRecruitWeek } from '@/lib/utils';
 
-type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'transfers' | 'analytics';
+type View = 'owners' | 'board' | 'transfers' | 'overview' | 'schedule' | 'myslots' | 'settings';
 type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
@@ -52,7 +53,6 @@ export default function HomePage() {
   const [showSurgeryImport, setShowSurgeryImport] = useState(false);
   const [toast, setToast] = useState('');
   const events = useEventLog();
-  const [showMasterModal, setShowMasterModal] = useState(false);
 
   // ログイン中の立場（デモ用）
   const [userRole, setUserRole] = useState<UserRole>('dept');
@@ -70,6 +70,12 @@ export default function HomePage() {
   const [freeCutoff, setFreeCutoff] = useState<FreeCutoff>(60);
   const [setupConfirmed, setSetupConfirmed] = useState(true);
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
+  const [notificationsLoaded, setNotificationsLoaded] = useState(false);
+
+  // 枠の所有者が未確定のあいだ、管理者は ① から始める
+  useEffect(() => {
+    if (isLoggedIn && userRole === 'manager' && !setupConfirmed) setView('owners');
+  }, [isLoggedIn, userRole, setupConfirmed]);
 
   useEffect(() => {
     if (!toast) return;
@@ -101,7 +107,7 @@ export default function HomePage() {
     if (savedRole === 'manager' || savedRole === 'dept') {
       setUserRole(savedRole);
       setLoginRole(savedRole);
-      setView(savedRole === 'manager' ? 'overview' : 'myslots');
+      setView(savedRole === 'manager' ? 'board' : 'myslots');
     }
     if (savedLoggedIn) {
       setIsLoggedIn(true);
@@ -135,6 +141,7 @@ export default function HomePage() {
         // ignore invalid cache
       }
     }
+    setNotificationsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -144,9 +151,11 @@ export default function HomePage() {
       : { role: 'unknown' });
   }, [isLoggedIn, userRole, activeDeptId, schedule.departments]);
 
+  // 読み込みが終わる前に空の一覧で上書きしない
   useEffect(() => {
+    if (!notificationsLoaded) return;
     localStorage.setItem('or_dept_notifications', JSON.stringify(deptNotifications));
-  }, [deptNotifications]);
+  }, [deptNotifications, notificationsLoaded]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -275,7 +284,7 @@ export default function HomePage() {
     logEvent('login', { role: loginRole, deptId: loginRole === 'dept' ? nextDeptId : undefined });
     setUserRole(loginRole);
     setActiveDeptId(nextDeptId);
-    setView(loginRole === 'manager' ? 'overview' : 'myslots');
+    setView(loginRole === 'manager' ? 'board' : 'myslots');
     localStorage.setItem('or_user_role', loginRole);
     localStorage.setItem('or_logged_in', 'true');
     if (nextDeptId) localStorage.setItem('or_active_dept', nextDeptId);
@@ -462,7 +471,6 @@ export default function HomePage() {
   const activeDept = schedule.departments.find(d => d.id === activeDeptId);
   const pendingRequests = schedule.slotRequests.filter(r => r.status === 'pending');
   const pendingApprovalCount = pendingRequests.length;
-  const queuedNotificationCount = deptNotifications.filter(item => item.status === 'queued').length;
 
   // 診療科部長向けの自科サマリー
   const ownedByMe = schedule.allocations.filter(a => a.deptId === activeDeptId).length;
@@ -570,13 +578,15 @@ export default function HomePage() {
     });
   }
 
-  const tabs: Array<{ id: View; label: string; badge?: number; badgeTone?: 'amber' | 'red' }> = isManager
+  // 中央（手術室管理者）の役割＝①枠の所有者の定義 ②移譲依頼の確認・承認・自動通知 ③移譲実績の見える化
+  const tabs: Array<{ id: View; label: string; badge?: number; badgeTone?: 'amber' | 'red'; sub?: boolean }> = isManager
     ? [
-        { id: 'overview', label: '🏠 空き状況' },
-        { id: 'board', label: '✅ 申請の承認', badge: pendingApprovalCount, badgeTone: 'amber' },
-        { id: 'transfers', label: '🔁 移譲の記録' },
-        { id: 'schedule', label: '📅 予定表' },
-        { id: 'analytics', label: '📊 集計' },
+        { id: 'owners', label: '① 枠の所有者', badge: setupConfirmed ? 0 : 1, badgeTone: 'red' },
+        { id: 'board', label: '② 移譲依頼', badge: pendingApprovalCount, badgeTone: 'amber' },
+        { id: 'transfers', label: '③ 移譲の実績' },
+        { id: 'overview', label: '空き状況', sub: true },
+        { id: 'schedule', label: '予定表', sub: true },
+        { id: 'settings', label: '⚙ 設定', sub: true },
       ]
     : [
         { id: 'myslots', label: '🏠 自分の科', badge: myPendingRequests, badgeTone: 'amber' },
@@ -647,11 +657,11 @@ export default function HomePage() {
 
           {/* View tabs */}
           <nav className="flex bg-gray-100 rounded-lg p-1 gap-1">
-            {tabs.map(tab => (
+            {tabs.map((tab, i) => (
               <button
                 key={tab.id}
                 onClick={() => setView(tab.id)}
-                className={`px-4 py-2 text-base font-bold rounded-md transition-colors flex items-center gap-1.5 ${view === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`${tab.sub ? 'px-3 py-2 text-sm font-medium' : 'px-4 py-2 text-base font-bold'} ${tab.sub && !tabs[i - 1]?.sub ? 'ml-3' : ''} rounded-md transition-colors flex items-center gap-1.5 ${view === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {tab.label}
                 {!!tab.badge && (
@@ -683,12 +693,6 @@ export default function HomePage() {
                 >
                   📥 予定表を取り込む
                 </button>
-                <button
-                  onClick={() => setShowMasterModal(true)}
-                  className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
-                >
-                  ⚙ 枠の設定
-                </button>
               </>
             )}
             <button
@@ -716,21 +720,21 @@ export default function HomePage() {
           actionLabel={isManager ? '空き状況を見る' : '空き枠を見る'}
         />
 
-        {isManager && !setupConfirmed && (
+        {isManager && !setupConfirmed && view !== 'owners' && (
           <section className="mb-5 flex items-center gap-4 rounded-2xl border-2 border-[#1B3A5C] bg-white px-5 py-4 shadow-sm flex-wrap">
             <span className="text-3xl">📋</span>
             <div className="flex-1 min-w-0">
               <p className="text-lg font-bold text-gray-900">最初に、どの診療科がどの曜日・どの部屋の枠を持っているかを登録してください</p>
               <p className="text-sm text-gray-600">空き状況や移譲の判定は、この枠表をもとに行います。いまは院内の標準手術枠（新設案）が入っています。</p>
             </div>
-            <button type="button" onClick={() => setShowMasterModal(true)} className="rounded-xl bg-[#1B3A5C] px-5 py-3 text-base font-bold text-white hover:opacity-90">
+            <button type="button" onClick={() => setView('owners')} className="rounded-xl bg-[#1B3A5C] px-5 py-3 text-base font-bold text-white hover:opacity-90">
               枠の初期設定をする
             </button>
           </section>
         )}
 
         {/* ── 管理者: 承認待ちをどの画面からでもワンクリックで処理 ── */}
-        {isManager && pendingApprovalCount > 0 && view !== 'board' && (
+        {isManager && pendingApprovalCount > 0 && view !== 'owners' && (
           <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-2">
               <h3 className="text-lg font-bold text-amber-900">👉 今やること：申請が {pendingApprovalCount}件 届いています</h3>
@@ -767,7 +771,7 @@ export default function HomePage() {
           </section>
         )}
 
-        {isManager && pendingApprovalCount === 0 && view === 'overview' && (
+        {isManager && pendingApprovalCount === 0 && view === 'board' && (
           <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-base font-bold text-emerald-800">
             ✅ いま承認が必要な申請はありません
           </div>
@@ -830,9 +834,6 @@ export default function HomePage() {
             freeCutoffMinutes={freeCutoff}
           />
         )}
-        {view === 'overview' && isManager && (
-          <ContributionBoard departments={schedule.departments} />
-        )}
 
         {/* ── 部長: 自科の枠 ── */}
         {view === 'myslots' && !isManager && (
@@ -885,24 +886,46 @@ export default function HomePage() {
           />
         )}
 
-        {/* ── 管理者: 承認・空き枠 ── */}
+        {/* ── 管理者: ① 枠の所有者 ── */}
+        {view === 'owners' && isManager && (
+          <SlotSetupWizard
+            inline
+            allocations={schedule.allocations}
+            departments={schedule.departments}
+            rooms={schedule.rooms}
+            confirmed={setupConfirmed}
+            onSave={next => {
+              schedule.saveAllocations(next);
+              localStorage.setItem('or_setup_confirmed', '1');
+              setSetupConfirmed(true);
+              setToast(`✅ 枠の所有者を確定しました（${next.length / 2}枠相当）`);
+              setView('board');
+            }}
+            onClose={() => setView('board')}
+          />
+        )}
+
+        {/* ── 管理者: ② 移譲依頼（確認・承認・自動通知） ── */}
+        {view === 'board' && isManager && (
+          <div className="mb-5">
+            <NotificationPanel
+              notifications={deptNotifications}
+              cadence={notificationCadence}
+              onCadenceChange={handleNotificationCadenceChange}
+            />
+          </div>
+        )}
         {view === 'board' && isManager && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <OpenSlotBoard
+            <OpenReleasesList
               releasedSlots={schedule.releasedSlots}
-              absences={absences}
-              departments={schedule.departments}
-              rooms={schedule.rooms}
-              allocations={schedule.allocations}
-              surgeries={schedule.surgeries}
-              currentUserRole={userRole}
-              currentDeptId={activeDeptId}
-              notificationCadence={notificationCadence}
               slotRequests={schedule.slotRequests}
-              onClaim={claimWithToast}
-              onCancelRelease={schedule.cancelRelease}
-              onApproveRequest={approveWithToast}
-              onRejectRequest={rejectWithToast}
+              departments={schedule.departments}
+              onAssign={claimWithToast}
+              onCancel={id => {
+                schedule.cancelRelease(id);
+                setToast('共有を取り消しました');
+              }}
             />
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -962,22 +985,20 @@ export default function HomePage() {
           />
         )}
 
-        {/* ── 管理者: 分析 ── */}
-        {view === 'analytics' && isManager && (
+        {view === 'transfers' && isManager && (
+          <div className="mt-5 space-y-5">
+          <ContributionBoard departments={schedule.departments} limit={12} />
           <AnalyticsDashboard
+            mode="analytics"
             departments={schedule.departments}
             releasedSlots={schedule.releasedSlots}
-            queuedNotifications={queuedNotificationCount}
-            notificationCadence={notificationCadence}
             updateCycle={updateCycle}
-            onNotificationCadenceChange={handleNotificationCadenceChange}
             onUpdateCycleChange={handleUpdateCycleChange}
             freeCutoff={freeCutoff}
             onFreeCutoffChange={handleFreeCutoffChange}
             onOpenImport={() => setShowSurgeryImport(true)}
             onResetDemo={handleResetDemo}
           >
-            <ContributionBoard departments={schedule.departments} limit={12} />
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-base font-bold text-gray-900">稼働率（{format(weekStart, 'M/d', { locale: ja })} 週）</h3>
@@ -1003,6 +1024,22 @@ export default function HomePage() {
               />
             </section>
           </AnalyticsDashboard>
+          </div>
+        )}
+
+        {/* ── 管理者: 設定 ── */}
+        {view === 'settings' && isManager && (
+          <AnalyticsDashboard
+            mode="settings"
+            departments={schedule.departments}
+            releasedSlots={schedule.releasedSlots}
+            updateCycle={updateCycle}
+            onUpdateCycleChange={handleUpdateCycleChange}
+            freeCutoff={freeCutoff}
+            onFreeCutoffChange={handleFreeCutoffChange}
+            onOpenImport={() => setShowSurgeryImport(true)}
+            onResetDemo={handleResetDemo}
+          />
         )}
       </main>
 
@@ -1040,21 +1077,6 @@ export default function HomePage() {
         <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-gray-900 px-6 py-4 text-base font-bold text-white shadow-2xl">
           {toast}
         </div>
-      )}
-      {showMasterModal && isManager && (
-        <SlotSetupWizard
-          allocations={schedule.allocations}
-          departments={schedule.departments}
-          rooms={schedule.rooms}
-          confirmed={setupConfirmed}
-          onSave={next => {
-            schedule.saveAllocations(next);
-            localStorage.setItem('or_setup_confirmed', '1');
-            setSetupConfirmed(true);
-            setToast(`✅ 手術枠を確定しました（${next.length / 2}枠相当）`);
-          }}
-          onClose={() => setShowMasterModal(false)}
-        />
       )}
     </div>
   );
