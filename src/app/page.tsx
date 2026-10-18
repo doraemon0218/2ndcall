@@ -10,11 +10,12 @@ import DeptRanking from '@/components/DeptRanking';
 import OpenSlotBoard from '@/components/OpenSlotBoard';
 import AbsenceModal, { Absence } from '@/components/AbsenceModal';
 import AbsenceImportModal from '@/components/AbsenceImportModal';
-import AllocationMasterModal from '@/components/AllocationMasterModal';
+import SlotSetupWizard from '@/components/SlotSetupWizard';
 import DeptSlotView from '@/components/DeptSlotView';
 import ManagerWeekOverview from '@/components/ManagerWeekOverview';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import ContributionBoard from '@/components/ContributionBoard';
+import TransferLedger from '@/components/TransferLedger';
 import RecruitBanner from '@/components/RecruitBanner';
 import SurgeryImportModal from '@/components/SurgeryImportModal';
 import { useEventLog } from '@/hooks/useEventLog';
@@ -23,7 +24,7 @@ import { writeDemoDataset } from '@/lib/storage';
 import { logEvent, setActor } from '@/lib/eventLog';
 import { generateId, getOperatingWeekStart, getActiveRecruitWeek } from '@/lib/utils';
 
-type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'analytics';
+type View = 'overview' | 'schedule' | 'myslots' | 'board' | 'transfers' | 'analytics';
 type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
@@ -67,6 +68,7 @@ export default function HomePage() {
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
   const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
   const [freeCutoff, setFreeCutoff] = useState<FreeCutoff>(60);
+  const [setupConfirmed, setSetupConfirmed] = useState(true);
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
 
   useEffect(() => {
@@ -111,6 +113,8 @@ export default function HomePage() {
     if (savedCadence === 'instant' || savedCadence === '30m' || savedCadence === '1h' || savedCadence === '6h') {
       setNotificationCadence(savedCadence);
     }
+
+    setSetupConfirmed(localStorage.getItem('or_setup_confirmed') === '1');
 
     const savedCutoff = Number(localStorage.getItem('or_free_cutoff'));
     if (savedCutoff === 60 || savedCutoff === 90 || savedCutoff === 120) {
@@ -570,6 +574,7 @@ export default function HomePage() {
     ? [
         { id: 'overview', label: '🏠 空き状況' },
         { id: 'board', label: '✅ 申請の承認', badge: pendingApprovalCount, badgeTone: 'amber' },
+        { id: 'transfers', label: '🔁 移譲の記録' },
         { id: 'schedule', label: '📅 予定表' },
         { id: 'analytics', label: '📊 集計' },
       ]
@@ -710,6 +715,19 @@ export default function HomePage() {
           onShow={() => setView(isManager ? 'overview' : 'myslots')}
           actionLabel={isManager ? '空き状況を見る' : '空き枠を見る'}
         />
+
+        {isManager && !setupConfirmed && (
+          <section className="mb-5 flex items-center gap-4 rounded-2xl border-2 border-[#1B3A5C] bg-white px-5 py-4 shadow-sm flex-wrap">
+            <span className="text-3xl">📋</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-lg font-bold text-gray-900">最初に、どの診療科がどの曜日・どの部屋の枠を持っているかを登録してください</p>
+              <p className="text-sm text-gray-600">空き状況や移譲の判定は、この枠表をもとに行います。いまは院内の標準手術枠（新設案）が入っています。</p>
+            </div>
+            <button type="button" onClick={() => setShowMasterModal(true)} className="rounded-xl bg-[#1B3A5C] px-5 py-3 text-base font-bold text-white hover:opacity-90">
+              枠の初期設定をする
+            </button>
+          </section>
+        )}
 
         {/* ── 管理者: 承認待ちをどの画面からでもワンクリックで処理 ── */}
         {isManager && pendingApprovalCount > 0 && view !== 'board' && (
@@ -934,6 +952,16 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* ── 管理者: 枠の移譲の記録 ── */}
+        {view === 'transfers' && isManager && (
+          <TransferLedger
+            departments={schedule.departments}
+            releasedSlots={schedule.releasedSlots}
+            surgeries={schedule.surgeries}
+            allocations={schedule.allocations}
+          />
+        )}
+
         {/* ── 管理者: 分析 ── */}
         {view === 'analytics' && isManager && (
           <AnalyticsDashboard
@@ -1014,11 +1042,17 @@ export default function HomePage() {
         </div>
       )}
       {showMasterModal && isManager && (
-        <AllocationMasterModal
+        <SlotSetupWizard
           allocations={schedule.allocations}
           departments={schedule.departments}
           rooms={schedule.rooms}
-          onSave={schedule.saveAllocations}
+          confirmed={setupConfirmed}
+          onSave={next => {
+            schedule.saveAllocations(next);
+            localStorage.setItem('or_setup_confirmed', '1');
+            setSetupConfirmed(true);
+            setToast(`✅ 手術枠を確定しました（${next.length / 2}枠相当）`);
+          }}
           onClose={() => setShowMasterModal(false)}
         />
       )}

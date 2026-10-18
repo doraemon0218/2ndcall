@@ -242,7 +242,7 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
   const iso = (minutesAgo: number) => new Date(now - minutesAgo * 60000).toISOString();
   const releasedSlots: ReleasedSlot[] = [];
   const slotRequests: SlotRequest[] = [];
-  const future = emptySlots.filter(s => s.weekOffset >= 1 && s.date > todayStr);
+  const future = emptySlots.filter(s => s.weekOffset >= 1 && s.date > todayStr && hasSlots(s.alloc.deptId));
   const pick = (pred: (s: typeof future[number]) => boolean) => {
     const i = future.findIndex(pred);
     return i >= 0 ? future.splice(i, 1)[0] : undefined;
@@ -316,6 +316,54 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
     addRequest(r, winner, 'demo-q4', 60 * 44, 'approved');
   }
   openOnes.forEach((s, i) => releasedSlots.push(makeRelease(s, `demo-r${5 + i}`, i === 0 ? '休暇' : 'その他', i === 0 ? 'neutral' : 'neutral', 'manual', 60 * (8 + i * 5))));
+
+  // ── 移譲された枠に、使った科の手術を入れる（過去は実施済み・稼働率はさまざま） ──
+  const fillTransferred = (slot: { alloc: SlotAllocation; date: string }, dept: Department, targetRate: number, isPast: boolean) => {
+    const r = rng(`transfer-${slot.alloc.id}-${slot.date}`);
+    const winStart = slot.alloc.startHour * 60 + slot.alloc.startMin + (slot.alloc.period === 'am' ? 45 : 0);
+    const winEnd = slot.alloc.endHour * 60 + slot.alloc.endMin;
+    const budget = (winEnd - winStart) * targetRate;
+    const menu = PROCEDURES[dept.id] ?? [['手術', 90]];
+    let cursor = winStart;
+    let used = 0;
+    while (used < budget - 15 && cursor < winEnd - 20) {
+      const [procedure, base] = menu[Math.floor(r() * menu.length)];
+      const duration = Math.min(Math.round((base * (0.85 + r() * 0.3)) / 5) * 5, Math.round(budget - used), winEnd - cursor);
+      if (duration < 15) break;
+      surgeries.push({
+        id: `demo-s${++seq}`, date: slot.date, roomId: slot.alloc.roomId,
+        startTime: hhmm(cursor), endTime: hhmm(cursor + duration), patientName: '', procedure,
+        surgeonName: `${dept.shortName} 担当医${String.fromCharCode(65 + Math.floor(r() * 4))}`,
+        deptId: dept.id, deptName: dept.name, status: isPast ? 'completed' : 'scheduled',
+        isEmergency: false, notes: '移譲枠', allocationId: slot.alloc.id,
+      });
+      used += duration;
+      cursor += duration + 30;
+    }
+  };
+
+  // 来週の移譲済み枠には予定を入れておく
+  if (moved) {
+    const winner = otherDept(moved.alloc.deptId, 1);
+    fillTransferred(moved, winner, 0.8, false);
+  }
+
+  // 過去4週：各週3件の移譲（稼働率 高・中・低／使われず が混ざる）
+  const pastRates = [0.95, 0.7, 0.45, 0.88, 0.0, 0.62, 0.9, 0.55, 0.8, 0.35, 0.92, 0.75];
+  let pastIdx = 0;
+  for (let w = -4; w <= -1; w++) {
+    const pool = emptySlots.filter(s => s.weekOffset === w && hasSlots(s.alloc.deptId));
+    for (let k = 0; k < 3 && pool.length > 0; k++) {
+      const slot = pool.splice(Math.floor(rng(`pick-${w}-${k}`)() * pool.length), 1)[0];
+      const winner = otherDept(slot.alloc.deptId, pastIdx * 3 + 2);
+      const rate = pastRates[pastIdx % pastRates.length];
+      const releasedMinutesAgo = Math.round((today.getTime() - new Date(`${slot.date}T09:00:00`).getTime()) / 60000) + 60 * 24 * 4;
+      const base = makeRelease(slot, `demo-past-r${pastIdx}`, pastIdx % 3 === 0 ? '学会' : pastIdx % 3 === 1 ? '手術予定の延期' : '休暇', pastIdx % 3 === 0 ? 'positive' : pastIdx % 3 === 1 ? 'negative' : 'neutral', 'manual', releasedMinutesAgo);
+      releasedSlots.push({ ...base, claimedByDeptId: winner.id, claimedByDeptName: winner.name, claimedAt: iso(releasedMinutesAgo - 600), status: 'done' });
+      if (rate > 0) fillTransferred(slot, winner, rate, true);
+      pastIdx++;
+    }
+  }
 
   return {
     departments: DEMO_DEPARTMENTS,
