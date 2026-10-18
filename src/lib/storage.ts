@@ -3,7 +3,7 @@ import { format } from 'date-fns';
 import { buildDemoDataset } from './demoData';
 import { getOperatingWeekStart } from './utils';
 
-const SCHEMA_VERSION = '9'; // 型変更・デモデータ更新のたびにインクリメント
+const SCHEMA_VERSION = '11'; // 型変更・デモデータ更新のたびにインクリメント
 const VERSION_KEY = 'or_schema_version';
 
 const KEYS = {

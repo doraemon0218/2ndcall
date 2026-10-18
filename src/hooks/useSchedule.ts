@@ -82,6 +82,45 @@ export function useSchedule() {
     });
   }, []);
 
+  // 移譲枠の実績入力：使った科の手術の実際の入退室時刻を記録する（実施しなかった手術は中止扱い）
+  const recordTransferActuals = useCallback((releaseId: string, entries: Array<{
+    surgeryId?: string; procedure: string; start: string; end: string; done: boolean;
+  }>) => {
+    const release = latest.current.releasedSlots.find(r => r.id === releaseId);
+    if (!release?.claimedByDeptId) return;
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+    const doneEntries = entries.filter(e => e.done && e.start && e.end);
+    logEvent('transfer_actual_recorded', {
+      releaseId, date: release.date, roomId: release.roomId, ownerDeptId: release.ownerDeptId,
+      claimedByDeptId: release.claimedByDeptId, cases: doneEntries.length,
+      actualMinutes: doneEntries.reduce((s, e) => s + Math.max(0, toMin(e.end) - toMin(e.start)), 0),
+    });
+    setSurgeries(prev => {
+      const next = prev.map(s => {
+        const e = entries.find(x => x.surgeryId === s.id);
+        if (!e) return s;
+        return e.done
+          ? { ...s, procedure: e.procedure || s.procedure, actualStartTime: e.start, actualEndTime: e.end, status: 'completed' as const }
+          : { ...s, status: 'cancelled' as const };
+      });
+      const added = entries.filter(e => !e.surgeryId && e.done && e.start && e.end).map(e => ({
+        id: generateId(), date: release.date, roomId: release.roomId,
+        startTime: e.start, endTime: e.end, actualStartTime: e.start, actualEndTime: e.end,
+        patientName: '', procedure: e.procedure || '（術式未記載）', surgeonName: '',
+        deptId: release.claimedByDeptId!, deptName: release.claimedByDeptName ?? '',
+        status: 'completed' as const, isEmergency: false, notes: '移譲枠（実績入力）', allocationId: release.allocationId,
+      }));
+      const merged = [...next, ...added];
+      storage.saveSurgeries(merged);
+      return merged;
+    });
+    setReleasedSlots(prev => {
+      const next = prev.map(r => (r.id === releaseId ? { ...r, actualRecordedAt: new Date().toISOString() } : r));
+      storage.saveReleasedSlots(next);
+      return next;
+    });
+  }, []);
+
   // 予定表の取り込み：指定日の手術予定をすべて入れ替える（上書き）
   const replaceSurgeriesForDates = useCallback((dates: string[], incoming: Omit<Surgery, 'id'>[]) => {
     const dateSet = new Set(dates);
@@ -154,6 +193,7 @@ export function useSchedule() {
     procedure: string; surgeonName: string;
     wantedStartTime: string; wantedEndTime: string;
     notes: string;
+    durationMinutes?: number; safetyMarginMinutes?: number;
   }) => {
     const newReq: SlotRequest = { id: generateId(), ...req, requestedAt: new Date().toISOString(), status: 'pending' };
     const release = latest.current.releasedSlots.find(r => r.id === req.releaseId);
@@ -162,6 +202,7 @@ export function useSchedule() {
       ownerDeptId: release?.ownerDeptId, requestingDeptId: req.requestingDeptId,
       wantedStartTime: req.wantedStartTime, wantedEndTime: req.wantedEndTime,
       minutesSinceRelease: release ? minutesBetween(release.releasedAt, newReq.requestedAt) : null,
+      durationMinutes: req.durationMinutes, safetyMarginMinutes: req.safetyMarginMinutes,
     });
     setSlotRequests(prev => {
       const next = [...prev, newReq];
@@ -307,7 +348,7 @@ export function useSchedule() {
 
   return {
     departments, rooms, allocations, surgeries, releasedSlots, slotRequests, initialized,
-    addSurgery, updateSurgery, deleteSurgery, replaceSurgeriesForDates,
+    addSurgery, updateSurgery, deleteSurgery, replaceSurgeriesForDates, recordTransferActuals,
     saveAllocations, addAllocation, deleteAllocation,
     releaseSlot, claimSlot, cancelRelease,
     submitRequest, approveRequest, rejectRequest, cancelRequest,

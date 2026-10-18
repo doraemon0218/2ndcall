@@ -161,6 +161,7 @@ function rng(seedText: string) {
   };
 }
 
+const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
 const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 const ymd = (d: Date) => format(d, 'yyyy-MM-dd');
 
@@ -290,20 +291,21 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
     const list = DEMO_DEPARTMENTS.filter(d => d.id !== excludeId && hasSlots(d.id));
     return list[offset % list.length];
   };
-  const addRequest = (release: ReleasedSlot, dept: Department, id: string, minutesAgo: number, status: SlotRequest['status'] = 'pending') => {
+  const addRequest = (release: ReleasedSlot, dept: Department, id: string, minutesAgo: number, status: SlotRequest['status'] = 'pending', durationMinutes = 150) => {
     slotRequests.push({
       id, releaseId: release.id, date: release.date, roomId: release.roomId,
       requestingDeptId: dept.id, requestingDeptName: dept.name,
       procedure: (PROCEDURES[dept.id] ?? [['手術', 90]])[0][0], surgeonName: '',
       wantedStartTime: hhmm(release.startHour * 60), wantedEndTime: hhmm(release.endHour * 60),
       notes: '', requestedAt: iso(minutesAgo), status,
+      durationMinutes, safetyMarginMinutes: 30,
     });
   };
   if (contested) {
     const r = makeRelease(contested, 'demo-r2', '外来日の変更', 'neutral', 'manual', 60 * 20);
     releasedSlots.push(r);
-    addRequest(r, otherDept(r.ownerDeptId, 0), 'demo-q1', 60 * 6);
-    addRequest(r, otherDept(r.ownerDeptId, 3), 'demo-q2', 60 * 2);
+    addRequest(r, otherDept(r.ownerDeptId, 0), 'demo-q1', 60 * 6, 'pending', 120);
+    addRequest(r, otherDept(r.ownerDeptId, 3), 'demo-q2', 60 * 2, 'pending', 180);
   }
   if (single) {
     const r = makeRelease(single, 'demo-r3', '手術予定の延期', 'negative', 'manual', 60 * 12);
@@ -360,8 +362,27 @@ export function buildDemoDataset(today: Date = new Date()): DemoDataset {
       const rate = pastRates[pastIdx % pastRates.length];
       const releasedMinutesAgo = Math.round((today.getTime() - new Date(`${slot.date}T09:00:00`).getTime()) / 60000) + 60 * 24 * 4;
       const base = makeRelease(slot, `demo-past-r${pastIdx}`, pastIdx % 3 === 0 ? '学会' : pastIdx % 3 === 1 ? '手術予定の延期' : '休暇', pastIdx % 3 === 0 ? 'positive' : pastIdx % 3 === 1 ? 'negative' : 'neutral', 'manual', releasedMinutesAgo);
-      releasedSlots.push({ ...base, claimedByDeptId: winner.id, claimedByDeptName: winner.name, claimedAt: iso(releasedMinutesAgo - 600), status: 'done' });
+      const before = surgeries.length;
       if (rate > 0) fillTransferred(slot, winner, rate, true);
+      // 実績：直近2件は未入力のまま、それ以外は予定から少し前後した入退室時刻を入れる（1件は終了時刻を超過）
+      const recordActual = pastIdx < 10;
+      if (recordActual) {
+        const jr = rng(`actual-${slot.alloc.id}-${slot.date}`);
+        const winEnd = slot.alloc.endHour * 60 + slot.alloc.endMin;
+        const added = surgeries.slice(before);
+        added.forEach((sg, k) => {
+          const shift = Math.round((jr() * 20 - 8) / 5) * 5;
+          const startM = toMin(sg.startTime) + shift;
+          let endM = toMin(sg.endTime) + shift + Math.round((jr() * 30 - 10) / 5) * 5;
+          if (pastIdx === 3 && k === added.length - 1) endM = Math.max(endM, winEnd + 25);
+          sg.actualStartTime = hhmm(startM);
+          sg.actualEndTime = hhmm(Math.max(endM, startM + 10));
+        });
+      }
+      releasedSlots.push({
+        ...base, claimedByDeptId: winner.id, claimedByDeptName: winner.name, claimedAt: iso(releasedMinutesAgo - 600), status: 'done',
+        ...(recordActual ? { actualRecordedAt: iso(releasedMinutesAgo - 60 * 24 * 5) } : {}),
+      });
       pastIdx++;
     }
   }

@@ -16,7 +16,12 @@ import ManagerWeekOverview from '@/components/ManagerWeekOverview';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import ContributionBoard from '@/components/ContributionBoard';
 import TransferLedger from '@/components/TransferLedger';
+import DeptActualsPanel from '@/components/DeptActualsPanel';
+import { computeTransfers, needsActual, getReleaseWindow } from '@/lib/transfers';
+import RequestDialog from '@/components/RequestDialog';
+import type { ActualEntry } from '@/components/TransferActualForm';
 import NotificationPanel from '@/components/NotificationPanel';
+import ApprovalQueue from '@/components/ApprovalQueue';
 import RecruitBanner from '@/components/RecruitBanner';
 import SurgeryImportModal from '@/components/SurgeryImportModal';
 import { useEventLog } from '@/hooks/useEventLog';
@@ -30,6 +35,7 @@ type UserRole = 'manager' | 'dept';
 type NotificationCadence = 'instant' | '30m' | '1h' | '6h';
 type UpdateCycle = 'annual' | 'quarterly' | 'halfyearly';
 type FreeCutoff = 60 | 90 | 120;
+type SafetyMargin = 0 | 15 | 30 | 45 | 60;
 type DeptNotificationStatus = 'queued' | 'sent';
 
 interface DeptNotification {
@@ -68,6 +74,8 @@ export default function HomePage() {
   const [notificationCadence, setNotificationCadence] = useState<NotificationCadence>('instant');
   const [updateCycle, setUpdateCycle] = useState<UpdateCycle>('annual');
   const [freeCutoff, setFreeCutoff] = useState<FreeCutoff>(60);
+  const [safetyMargin, setSafetyMargin] = useState<SafetyMargin>(30);
+  const [requestTargetId, setRequestTargetId] = useState<string | null>(null);
   const [setupConfirmed, setSetupConfirmed] = useState(true);
   const [deptNotifications, setDeptNotifications] = useState<DeptNotification[]>([]);
   const [notificationsLoaded, setNotificationsLoaded] = useState(false);
@@ -121,6 +129,11 @@ export default function HomePage() {
     }
 
     setSetupConfirmed(localStorage.getItem('or_setup_confirmed') === '1');
+
+    const savedMargin = localStorage.getItem('or_safety_margin');
+    if (savedMargin !== null && [0, 15, 30, 45, 60].includes(Number(savedMargin))) {
+      setSafetyMargin(Number(savedMargin) as SafetyMargin);
+    }
 
     const savedCutoff = Number(localStorage.getItem('or_free_cutoff'));
     if (savedCutoff === 60 || savedCutoff === 90 || savedCutoff === 120) {
@@ -212,6 +225,11 @@ export default function HomePage() {
   function handleNotificationCadenceChange(value: NotificationCadence) {
     setNotificationCadence(value);
     localStorage.setItem('or_notification_cadence', value);
+  }
+
+  function handleSafetyMarginChange(value: SafetyMargin) {
+    setSafetyMargin(value);
+    localStorage.setItem('or_safety_margin', String(value));
   }
 
   function handleFreeCutoffChange(value: FreeCutoff) {
@@ -493,8 +511,9 @@ export default function HomePage() {
 
   function approveWithToast(requestId: string) {
     const req = schedule.slotRequests.find(r => r.id === requestId);
+    const others = req ? pendingRequests.filter(r => r.releaseId === req.releaseId && r.id !== requestId) : [];
     handleApproveRequest(requestId);
-    if (req) setToast(`✅ 承認しました：${req.requestingDeptName} がこの枠を使います（各科に通知されます）`);
+    if (req) setToast(`✅ ${req.requestingDeptName}に決めました${others.length ? `（${others.map(o => o.requestingDeptName).join('・')}は見送り）` : ''}。各科に通知されます`);
   }
 
   function rejectWithToast(requestId: string) {
@@ -504,8 +523,18 @@ export default function HomePage() {
   }
 
   function claimWithToast(releaseId: string, deptId: string, deptName: string) {
+    if (!isManager) {
+      setRequestTargetId(releaseId); // 部長は所要時間を入れて申請する
+      return;
+    }
     handleClaimSlot(releaseId, deptId, deptName);
     setToast(isManager ? `✅ ${deptName} に割り当てました` : '📨 申請しました。手術室の管理者が承認すると確定します');
+  }
+
+  function recordActualsWithToast(releaseId: string, entries: ActualEntry[]) {
+    schedule.recordTransferActuals(releaseId, entries);
+    const done = entries.filter(e => e.done).length;
+    setToast(done ? `✅ 実績を保存しました（${done}件）` : '✅ 「手術なし」として記録しました');
   }
 
   function handleResetDemo() {
@@ -735,40 +764,15 @@ export default function HomePage() {
 
         {/* ── 管理者: 承認待ちをどの画面からでもワンクリックで処理 ── */}
         {isManager && pendingApprovalCount > 0 && view !== 'owners' && (
-          <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <h3 className="text-lg font-bold text-amber-900">👉 今やること：申請が {pendingApprovalCount}件 届いています</h3>
-              <button type="button" onClick={() => setView('board')} className="text-sm font-bold text-amber-700 hover:underline">
-                くわしく見る →
-              </button>
-            </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {pendingRequests.map(req => {
-                const release = schedule.releasedSlots.find(r => r.id === req.releaseId);
-                const competing = pendingRequests.filter(r => r.releaseId === req.releaseId).length;
-                return (
-                  <div key={req.id} className="flex items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-base font-bold text-gray-800 truncate">{req.requestingDeptName} が使いたい</p>
-                      <p className="text-xs text-gray-500">元は {release?.ownerDeptName ?? '—'} の枠</p>
-                      <p className="text-[11px] text-gray-500">
-                        {format(new Date(`${req.date}T00:00:00`), 'M/d(E)', { locale: ja })} · 手術室{req.roomId.replace('or', '')} · {req.wantedStartTime}–{req.wantedEndTime}
-                        {competing > 1 && <span className="ml-1 font-bold text-red-600">（{competing}科が希望・1科を選ぶ）</span>}
-                      </p>
-                    </div>
-                    <div className="flex gap-1.5 flex-shrink-0">
-                      <button type="button" onClick={() => approveWithToast(req.id)} className="px-4 py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg">
-                        ⭕ 承認
-                      </button>
-                      <button type="button" onClick={() => rejectWithToast(req.id)} className="px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200">
-                        ✕ 却下
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+          <ApprovalQueue
+            pendingRequests={pendingRequests}
+            releasedSlots={schedule.releasedSlots}
+            departments={schedule.departments}
+            onApprove={approveWithToast}
+            onReject={rejectWithToast}
+            allocations={schedule.allocations}
+            onShowMore={view !== 'board' ? () => setView('board') : undefined}
+          />
         )}
 
         {isManager && pendingApprovalCount === 0 && view === 'board' && (
@@ -837,6 +841,12 @@ export default function HomePage() {
 
         {/* ── 部長: 自科の枠 ── */}
         {view === 'myslots' && !isManager && (
+          <DeptActualsPanel
+            rows={needsActual(computeTransfers(schedule.releasedSlots, schedule.surgeries, schedule.allocations, format(new Date(), 'yyyy-MM-dd')), activeDeptId)}
+            onSave={recordActualsWithToast}
+          />
+        )}
+        {view === 'myslots' && !isManager && (
           <DeptSlotView
             activeDeptId={activeDeptId}
             currentUserRole={userRole}
@@ -853,6 +863,7 @@ export default function HomePage() {
             }}
             onApproveRequest={handleApproveRequest}
             onRejectRequest={schedule.rejectRequest}
+            onRequestSlot={id => setRequestTargetId(id)}
             onCancelRequest={id => {
               schedule.cancelRequest(id);
               setToast('申請を取り消しました');
@@ -982,6 +993,7 @@ export default function HomePage() {
             releasedSlots={schedule.releasedSlots}
             surgeries={schedule.surgeries}
             allocations={schedule.allocations}
+            onRecordActuals={recordActualsWithToast}
           />
         )}
 
@@ -1039,6 +1051,8 @@ export default function HomePage() {
             onFreeCutoffChange={handleFreeCutoffChange}
             onOpenImport={() => setShowSurgeryImport(true)}
             onResetDemo={handleResetDemo}
+            safetyMargin={safetyMargin}
+            onSafetyMarginChange={handleSafetyMarginChange}
           />
         )}
       </main>
@@ -1073,6 +1087,32 @@ export default function HomePage() {
           onClose={() => setShowSurgeryImport(false)}
         />
       )}
+      {requestTargetId && !isManager && (() => {
+        const release = schedule.releasedSlots.find(r => r.id === requestTargetId);
+        if (!release) return null;
+        const win = getReleaseWindow(release, schedule.allocations);
+        return (
+          <RequestDialog
+            release={release}
+            window={win}
+            deptName={activeDept?.name ?? '自科'}
+            safetyMarginMinutes={safetyMargin}
+            onClose={() => setRequestTargetId(null)}
+            onSubmit={({ durationMinutes, procedure }) => {
+              const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+              schedule.submitRequest({
+                releaseId: release.id, date: release.date, roomId: release.roomId,
+                requestingDeptId: activeDeptId, requestingDeptName: activeDept?.name ?? '',
+                procedure, surgeonName: '',
+                wantedStartTime: hhmm(win.start), wantedEndTime: hhmm(win.start + durationMinutes),
+                notes: '', durationMinutes, safetyMarginMinutes: safetyMargin,
+              });
+              setRequestTargetId(null);
+              setToast('📨 申請しました。手術室の管理者が承認すると確定します');
+            }}
+          />
+        );
+      })()}
       {toast && (
         <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-gray-900 px-6 py-4 text-base font-bold text-white shadow-2xl">
           {toast}

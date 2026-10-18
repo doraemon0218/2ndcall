@@ -22,7 +22,8 @@ export type EventType =
   | 'absence_registered'
   | 'absence_deleted'
   | 'schedule_imported'
-  | 'demo_reset';
+  | 'demo_reset'
+  | 'transfer_actual_recorded';
 
 export const EVENT_LABELS: Record<EventType, string> = {
   login: 'ログイン',
@@ -45,6 +46,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   absence_deleted: '不在を削除',
   schedule_imported: '予定表を取り込み',
   demo_reset: 'デモデータに戻す',
+  transfer_actual_recorded: '移譲枠の実績を入力',
 };
 
 export interface Actor {

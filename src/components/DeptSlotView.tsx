@@ -35,6 +35,7 @@ interface Props {
   onApproveRequest: (requestId: string) => void;
   onRejectRequest: (requestId: string) => void;
   onCancelRequest: (requestId: string) => void;
+  onRequestSlot: (releaseId: string) => void; // 申請画面（所要時間の入力）を開く
 }
 
 const DOW_LABELS = ['', '月', '火', '水', '木', '金', '土', '日'];
@@ -44,7 +45,7 @@ export default function DeptSlotView({
   activeDeptId, currentUserRole = 'dept', departments, allocations, surgeries,
   releasedSlots, slotRequests,
   onReleaseSlot, onCancelRelease, onSubmitRequest,
-  onApproveRequest, onRejectRequest, onCancelRequest,
+  onApproveRequest, onRejectRequest, onCancelRequest, onRequestSlot,
 }: Props) {
   interface ReleaseFormState { message: string; availStart: string; availEnd: string }
   interface RequestFormState { procedure: string; surgeonName: string; wantedStart: string; wantedEnd: string; notes: string }
@@ -264,24 +265,12 @@ export default function DeptSlotView({
                       {!approvedReq && !myRequest && !r.claimedByDeptId && (
                         <div className="flex flex-col items-end gap-1">
                           <button
-                            onClick={() => onSubmitRequest({
-                              releaseId: r.id, date: r.date, roomId: r.roomId,
-                              requestingDeptId: activeDeptId, requestingDeptName: activeDept?.name ?? '',
-                              procedure: '', surgeonName: '',
-                              wantedStartTime: r.availStartTime ?? `${r.startHour}:00`,
-                              wantedEndTime: r.availEndTime ?? `${r.endHour}:00`,
-                              notes: '',
-                            })}
+                            onClick={() => onRequestSlot(r.id)}
                             className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                           >
                             引き受けを申請
                           </button>
-                          <button
-                            onClick={() => setRequesting(isReqOpen ? null : r.id)}
-                            className="text-[10px] text-blue-600 hover:underline"
-                          >
-                            {isReqOpen ? '閉じる' : '術式・時間を添えて申請'}
-                          </button>
+                          <span className="text-[10px] text-gray-500">所要時間を入れて申請</span>
                         </div>
                       )}
                       {myRequest && myRequest.status === 'pending' && (

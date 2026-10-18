@@ -64,6 +64,9 @@ export interface Surgery {
   isEmergency: boolean;
   notes: string;
   allocationId?: string;
+  // 実績（移譲枠のみ、手術後に入力）
+  actualStartTime?: string; // HH:MM 入室
+  actualEndTime?: string;   // HH:MM 退室
 }
 
 // 空き枠への希望申請
@@ -82,6 +85,8 @@ export interface SlotRequest {
   notes: string;
   requestedAt: string;
   status: 'pending' | 'approved' | 'rejected';
+  durationMinutes?: number;       // 申請時に入力した所要時間
+  safetyMarginMinutes?: number;   // 申請時点の安全マージン（中央で設定）
 }
 
 // 空き枠解放（部長間共有）
@@ -111,6 +116,7 @@ export interface ReleasedSlot {
   claimedByDeptId?: string;
   claimedByDeptName?: string;
   claimedAt?: string;
+  actualRecordedAt?: string; // 移譲枠の実績を入力した日時（手術なしの場合も含む）
 }
 
 export interface WeeklySlot {

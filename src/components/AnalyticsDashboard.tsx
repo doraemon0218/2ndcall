@@ -19,6 +19,8 @@ interface Props {
   onFreeCutoffChange: (value: FreeCutoff) => void;
   onOpenImport: () => void;
   mode: 'analytics' | 'settings';
+  safetyMargin?: number;
+  onSafetyMarginChange?: (value: 0 | 15 | 30 | 45 | 60) => void;
   onResetDemo: () => void;
   children?: React.ReactNode; // 稼働率などの既存集計
 }
@@ -76,7 +78,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
 
 export default function AnalyticsDashboard({
   departments, releasedSlots,
-  updateCycle, onUpdateCycleChange, freeCutoff, onFreeCutoffChange, onOpenImport, onResetDemo, mode, children,
+  updateCycle, onUpdateCycleChange, freeCutoff, onFreeCutoffChange, onOpenImport, onResetDemo, mode, safetyMargin = 30, onSafetyMarginChange, children,
 }: Props) {
   const events = useEventLog();
   const [showLog, setShowLog] = useState(false);
@@ -268,7 +270,16 @@ export default function AnalyticsDashboard({
       {/* ── 運用設定 ── */}
       <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-bold text-gray-900">運用設定</h3>
-        <div className="mt-4 grid gap-5 md:grid-cols-2">
+        <div className="mt-4 grid gap-5 md:grid-cols-3">
+          <div>
+            <p className="text-sm font-bold text-gray-800">安全マージン</p>
+            <p className="text-xs text-gray-500 mt-0.5 mb-2">空き枠に申請するとき、所要時間にこの時間を足しても枠に収まる場合だけ申請できます。ぎりぎりの移譲で手術が延び、スタッフに負担がかかるのを防ぎます。</p>
+            <Segmented
+              value={String(safetyMargin)}
+              options={[{ value: '0', label: 'なし' }, { value: '15', label: '15分' }, { value: '30', label: '30分' }, { value: '45', label: '45分' }, { value: '60', label: '60分' }]}
+              onChange={v => onSafetyMarginChange?.(Number(v) as 0 | 15 | 30 | 45 | 60)}
+            />
+          </div>
           <div>
             <p className="text-sm font-bold text-gray-800">「一部空き」とみなす時間</p>
             <p className="text-xs text-gray-500 mt-0.5 mb-2">予定の合間に、この時間以上の空きがある枠を「一部空き」と表示します。予定が1件もない枠は「空き」です。</p>
